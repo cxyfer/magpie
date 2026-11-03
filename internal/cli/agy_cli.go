@@ -14,17 +14,17 @@ import (
 
 // `magpie agy run [args…]` is what the function agy magpie puts in the
 // user's shells runs (agent/agy.go): the agy on PATH, given magpie's
-// gateway, key and model while settings.json's model is one of magpie's,
-// and as it is otherwise. Every argument is agy's, --help too. `magpie agy
-// env` prints those variables and the model, one NAME=value a line and
-// nothing off magpie, for PowerShell's function.
+// Enterprise Gateway variables and model while magpie's stash names one, and
+// as it is otherwise. Every argument is agy's, --help too. `magpie agy env`
+// prints those variables and the model, one NAME=value a line and nothing
+// off magpie, for PowerShell's function.
 
-const agyRunUsage = `magpie agy run [args…]   start agy, on magpie while its model is one of magpie's
+const agyRunUsage = `magpie agy run [args…]   start agy, on magpie while magpie's stash names one of its models
 
-The agy on your PATH starts with GEMINI_API_KEY, GOOGLE_GEMINI_BASE_URL and
---model <its model> (not when you give --model yourself); every argument is
-agy's. Off magpie's models it starts as it is. The function agy magpie puts
-in your shell's profile runs this.
+The agy on your PATH starts with AGY_LLM_GATEWAY_URL, AGY_LLM_GATEWAY_API_KEY,
+AGY_LLM_GATEWAY_WIRE_PROTOCOL=openai and --model <its model> (not when you
+give --model yourself); every argument is agy's. Off magpie it starts as it
+is. The function agy magpie puts in your shell's profile runs this.
 
 magpie agy env           the variables and model it starts agy with, a NAME=value
                          a line; nothing while agy isn't on magpie
@@ -46,7 +46,10 @@ func agyCmd(args []string) (ok bool, err error) {
 			}
 			return true, fmt.Errorf("magpie agy env takes nothing after it, not %q", args[2])
 		}
-		env, model := agent.AgyStart()
+		env, model, err := agent.AgyStart()
+		if err != nil {
+			return true, err
+		}
 		if model == "" {
 			return true, nil
 		}
@@ -75,11 +78,14 @@ func agyRun(args []string) error {
 		return errors.New("the agy on your PATH is magpie itself; install Antigravity CLI")
 	}
 	env := os.Environ()
-	start, model := agent.AgyStart()
+	start, model, err := agent.AgyStart()
+	if err != nil {
+		return err
+	}
 	if model != "" {
 		env = slices.DeleteFunc(env, func(kv string) bool {
 			k, _, _ := strings.Cut(kv, "=")
-			return strings.EqualFold(k, "GEMINI_API_KEY") || strings.EqualFold(k, "GOOGLE_GEMINI_BASE_URL")
+			return agent.AgyEnvKey(k)
 		})
 		env = append(env, start...)
 		if !slices.ContainsFunc(args, modelFlag) {

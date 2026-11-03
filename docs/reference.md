@@ -2648,26 +2648,43 @@ the API key goes to `~/.gemini/.env`. Picking a catalog model points
 `auth` to API key with the gateway token, and names the model in
 `settings.json`; a native model puts the previous auth back.
 
-**Antigravity CLI** (`agy`) takes the gateway, its key and the model only
-from how it is started. Picking a catalog model (`magpie agy <model>`)
-puts a function named `agy` in a marked block (`# >>> magpie agy >>>`) of
-your shell profiles: `.zshrc`, the bash profile a terminal reads, and
-`config.fish` (the PowerShell profiles on Windows). In a new terminal,
-plain `agy` then runs `magpie agy run`, which starts the real agy with the
-gateway, the key and `--model` (yours wins when you give one); off magpie
-it starts agy untouched. A terminal open already takes the command the
-Launch row copies. Stepping out (`magpie agy default`) takes the block out
-again. `magpie agy env` prints what `agy run` adds.
+**Antigravity CLI** (`agy`) takes the gateway only from how it is started.
+Picking a catalog model (`magpie agy <model>`) records it in magpie's stash,
+keyed by the absolute settings path, and puts a function named `agy` in a
+marked block (`# >>> magpie agy >>>`) of your shell profiles:
+`.zshrc`, the bash profile a terminal reads, and `config.fish` (the
+PowerShell profiles on Windows). In a new terminal, plain `agy` then runs
+`magpie agy run`, which starts the real agy with
+`AGY_LLM_GATEWAY_URL` (the gateway root), `AGY_LLM_GATEWAY_API_KEY`,
+`AGY_LLM_GATEWAY_WIRE_PROTOCOL=openai`, an empty `AGY_LLM_GATEWAY_MODELS`,
+and `--model` (yours wins when you give one), so agy's `/model` list is
+magpie's models alone (`provider/model`). Off magpie it starts agy
+untouched. A terminal open already takes the command the Launch
+row copies. Stepping out (`magpie agy default`) takes the record and the
+block out again. `magpie agy env` prints what `agy run` adds.
+
+agy's own models are not offered by magpie: they are picked in agy's
+`/model` after stepping out. On upgrade, the old `modelProvider`/magpie
+`customModels` settings are cleaned, the model you were on carries over,
+and the model and provider you had come back on stepping out, but only when the
+current value still matches what magpie changed. An explicit user edit is kept. A
+`modelProvider` of `gemini` is taken out while connected (agy would send
+chats to `/v1beta`) and put back on stepping out. No magpie file is written
+inside agy's folder, and the Antigravity desktop app's settings are untouched.
+Old stash entries could not distinguish absent and empty values. A stashed
+`gemini` polluted by an old disconnect is indistinguishable from an original
+`gemini` and is kept. A CLI off magpie can still inherit a gateway from the
+desktop app's settings, as agy itself does.
 
 agy installed in a WSL distro is listed as Antigravity CLI · WSL
 <distro>, found by `~/.gemini/antigravity-cli` or the `agy` command there.
 A catalog model puts the same marked `agy` function in the distro's
 `~/.bashrc`, `~/.zshrc` and `~/.config/fish/config.fish` (each one that is
 there, plus the one for your login shell in the distro's `/etc/passwd`).
-There is no magpie inside the distro, so this function reads the model
-from `settings.json` itself. It names the gateway at the address the
-distro reaches it on: Windows' address under NAT, which a sync rewrites
-when WSL comes back on another one.
+There is no magpie inside the distro, so this function carries the gateway,
+key and model itself. It names the gateway at the address the distro
+reaches it on: Windows' address under NAT, which a sync rewrites when WSL
+comes back on another one.
 
 ### Import links
 

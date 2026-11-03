@@ -1,8 +1,10 @@
 package agent
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log"
 	"maps"
@@ -29,6 +31,26 @@ import (
 var stashMu sync.Mutex
 
 func stashPath() string { return filepath.Join(filepath.Dir(provider.Path()), "stash.json") }
+
+// stashLoadKnown is for edits that must distinguish unknown originals from
+// absent ones. Keep its memo kind separate from the historical loose parser.
+// The caller holds stashMu; the returned map belongs to it.
+func stashLoadKnown() (map[string]string, error) {
+	m, err := filememo.ReadNow("stash-known", stashPath(), func(b []byte) (map[string]string, error) {
+		out := map[string]string{}
+		if len(bytes.TrimSpace(b)) == 0 {
+			return out, nil
+		}
+		if err := json.Unmarshal(b, &out); err != nil || out == nil {
+			return nil, fmt.Errorf("%s: invalid stash object", stashPath())
+		}
+		return out, nil
+	})
+	if errors.Is(err, fs.ErrNotExist) {
+		return map[string]string{}, nil
+	}
+	return maps.Clone(m), err
+}
 
 // stashLoad is the stash as a map of the caller's own, to change and write
 // back.

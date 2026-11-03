@@ -58,6 +58,42 @@ func TestAgyAgent(t *testing.T) {
 	}
 }
 
+// agy on magpie's Enterprise Gateway asks /v1/chat/completions as
+// antigravity/cli/…, which the gateway would take for the Antigravity app
+// by its User-Agent alone; the key magpie starts it with names agy, so the
+// call is recorded as Antigravity CLI's.
+func TestAgyGatewayAgent(t *testing.T) {
+	setHome(t, t.TempDir())
+	f := &fake{t: t, reply: sse(
+		`data: {"id":"c1","choices":[{"delta":{"content":"OK"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2}}`,
+		`data: [DONE]`)}
+	setup(t, provider.Chat, f)
+	const ua = "antigravity/cli/1.4.12 (aidev_client; os_type=linux; arch=amd64; cl=1010700967; auth_method=gateway)"
+	for i, c := range []struct{ key, want string }{
+		{TokenFor("agy"), "agy"},
+		{TokenFor("antigravity"), "antigravity"},
+	} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"fake/m1","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
+		req.Header.Set("User-Agent", ua)
+		req.Header.Set("Authorization", "Bearer "+c.key)
+		New().Handler().ServeHTTP(rec, req)
+		if rec.Code != 200 || !strings.Contains(rec.Body.String(), "OK") {
+			t.Fatalf("%s: %d %s", c.want, rec.Code, rec.Body.String())
+		}
+		var got []usage.Record
+		for range 100 {
+			if got = usage.Load(time.Time{}); len(got) > i {
+				break
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		if len(got) <= i || got[i].Agent != c.want {
+			t.Fatalf("%s: records %+v", c.want, got)
+		}
+	}
+}
+
 // Antigravity CLI sends its tools' results under "model", right after the
 // call (captured from agy against a stub): kept there, a conversation that
 // ran a tool ends with the model's turn, and Antigravity answers 400

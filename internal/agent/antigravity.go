@@ -19,11 +19,12 @@ package agent
 // back when magpie steps out. On a gateway the app asks for no Google
 // sign-in and uses none: Google's docs say the two can't be used at once.
 //
-// The same file is read by agy (Antigravity's CLI) too, below its own
-// ~/.gemini/antigravity-cli/settings.json: an agy connected on its own row
-// (modelProvider gemini) keeps that route, one that isn't follows the app's
-// gateway. admin_settings.json, which an organisation installs, and the
-// AGY_LLM_GATEWAY_* variables win over this file, field by field.
+// The same file is read by agy (Antigravity's CLI) too: an agy connected
+// on its own row is started with its own AGY_LLM_GATEWAY_* environment
+// (agent/agy.go), which wins over the app's gateway, and one that isn't
+// follows the app's gateway. admin_settings.json, which an organisation
+// installs, and the AGY_LLM_GATEWAY_* variables win over this file, field
+// by field.
 
 import (
 	"encoding/json"

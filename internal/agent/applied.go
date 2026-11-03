@@ -656,6 +656,16 @@ func (a *Agent) noModelLeft() error {
 }
 
 func (a *Agent) connect() (Connection, error) {
+	if isAgy(a.ID) && a.Path != "" {
+		// Migrate before connect.was can replace the legacy original, and
+		// reject an unreadable stash before generic bookkeeping writes it.
+		if err := agyChange(a.ID, a.Path, "", "sync"); err != nil {
+			return Connection{}, err
+		}
+		if a.Wired() {
+			return Connection{How: "kept"}, nil
+		}
+	}
 	forget(a.ID + disconnectedKey)
 	// what it is on now, for Disconnect to put back what it can't
 	// otherwise (Goose's own model)
@@ -834,6 +844,14 @@ func (a *Agent) Disconnect() (err error) {
 		}
 		return a.Native.Execute(plan)
 	}
+	if isAgy(a.ID) && a.Path != "" {
+		if a.unreached != nil {
+			return a.unreached
+		}
+		if err := agyChange(a.ID, a.Path, "", "migrate"); err != nil {
+			return err
+		}
+	}
 	if !a.Wired() {
 		return nil
 	}
@@ -877,6 +895,11 @@ func (a *Agent) Disconnect() (err error) {
 	}
 	for _, f := range a.Fields {
 		if w := was[f.Key]; w != "" && after[f.Key] == "" && w != magpieID && !magpieValue(a, f, w, was) {
+			// agy's gateway never writes its model; its snapshot restoration
+			// already preserved the user's current value, including absence.
+			if isAgy(a.ID) {
+				continue
+			}
 			if err := f.Set(w); err != nil {
 				return fmt.Errorf("%s: %w", f.Label, err)
 			}

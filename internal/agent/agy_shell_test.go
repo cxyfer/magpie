@@ -36,7 +36,7 @@ func TestAgyShell(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if env, m := AgyStart(); env != nil || m != "" {
+	if env, m, err := AgyStart(); err != nil || env != nil || m != "" {
 		t.Fatalf("AgyStart before: %v %q", env, m)
 	}
 	if err := a.Apply("model", "magpie/deepseek/pro"); err != nil {
@@ -58,9 +58,10 @@ func TestAgyShell(t *testing.T) {
 	if n := a.Notice(); !strings.HasPrefix(n, "Type agy in a new terminal: magpie added it to ~/") || !strings.HasSuffix(n, "(in a terminal open now: "+a.Launch()+").") {
 		t.Fatalf("notice: %q", n)
 	}
-	env, m := AgyStart()
-	if m != "magpie/deepseek/pro" || strings.Join(env, " ") != "GEMINI_API_KEY="+gateway.TokenFor("agy")+" GOOGLE_GEMINI_BASE_URL="+gateway.URL() {
-		t.Fatalf("AgyStart: %v %q", env, m)
+	env, m, err := AgyStart()
+	if err != nil || m != "deepseek/pro" || strings.Join(env, " ") != "AGY_LLM_GATEWAY_URL="+gateway.URL()+
+		" AGY_LLM_GATEWAY_API_KEY="+gateway.TokenFor("agy")+" AGY_LLM_GATEWAY_WIRE_PROTOCOL=openai AGY_LLM_GATEWAY_MODELS=" {
+		t.Fatalf("AgyStart: %v %q %v", env, m, err)
 	}
 
 	// wired before the function was given: the next start gives it
@@ -108,5 +109,29 @@ func TestAgyFunction(t *testing.T) {
 		if got := agyFunction(kind, prog); !strings.Contains(got, want) {
 			t.Errorf("%s:\n%s\nwant it to have %s", kind, got, want)
 		}
+	}
+	fish := agyDistroFunction("fish", "agy-key", "http://127.0.0.1:3425", "deepseek/pro")
+	if !strings.Contains(fish, "AGY_LLM_GATEWAY_WIRE_PROTOCOL=openai agy $argv") || strings.Contains(fish, "command agy") {
+		t.Fatalf("fish gateway function doesn't invoke agy through env:\n%s", fish)
+	}
+}
+
+// The Windows command sets agy's gateway variables, clears the old
+// Gemini API ones, and asks for every model the gateway lists.
+func TestAgyLaunchPowerShell(t *testing.T) {
+	l := agyLaunchAt("http://127.0.0.1:3425", "magpie-agy", "deepseek/pro", true)
+	for _, want := range []string{
+		`$env:AGY_LLM_GATEWAY_URL="http://127.0.0.1:3425"`,
+		"$env:AGY_LLM_GATEWAY_API_KEY=\"" + "magpie-agy" + "\"",
+		`$env:AGY_LLM_GATEWAY_WIRE_PROTOCOL="openai"`,
+		`$env:AGY_LLM_GATEWAY_MODELS=""`,
+		`agy --model 'deepseek/pro'`,
+	} {
+		if !strings.Contains(l, want) {
+			t.Errorf("%q doesn't have %q", l, want)
+		}
+	}
+	if strings.Contains(l, "GEMINI_API_KEY") || strings.Contains(l, "GOOGLE_GEMINI_BASE_URL") {
+		t.Errorf("the old Gemini variables are still in %q", l)
 	}
 }

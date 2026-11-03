@@ -162,8 +162,8 @@ func TestDriftUnwiredEveryAgent(t *testing.T) {
 	// QwenPaw, once it has written its agents' settings
 	qwenpawFixture(t, home)
 	for _, a := range All() {
-		// agy's gateway is in the command that starts it, in no file (its
-		// Check is TestAgy's)
+		// agy's gateway is in the command that starts it and in magpie's
+		// own record, not the agent's config (its Check is TestAgy's)
 		if a.Check == nil || a.Launch != nil || a.Native != nil {
 			continue
 		}
