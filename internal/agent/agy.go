@@ -151,38 +151,22 @@ func agyFunction(kind, prog string) string {
 	switch kind {
 	case "fish":
 		q := "'" + strings.NewReplacer(`\`, `\\`, "'", `\'`).Replace(prog) + "'"
-		return "function agy\n    if test -x " + q + "\n        " + q + " agy run $argv\n    else\n        command agy $argv\n    end\nend"
+		return "function agy\n    if test -x " + q + "\n        " + q + " agy run $argv\n        if test $status -eq 0\n            return\n        end\n    end\n    command agy $argv\nend"
 	case "powershell":
 		q := "'" + strings.ReplaceAll(prog, "'", "''") + "'"
 		return `function agy {
     $real = Get-Command agy -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $real) { Write-Error 'agy is not installed'; return }
-    $start = @{}
     if (Test-Path -LiteralPath ` + q + `) {
-        foreach ($l in @(& ` + q + ` agy env)) {
-            $k, $v = "$l" -split '=', 2
-            if ($k) { $start[$k] = $v }
-        }
+        & ` + q + ` agy run @args
+        if ($LASTEXITCODE -eq 0) { return }
     }
-    if (-not $start.model) { & $real @args; return }
-    $names = 'GEMINI_API_KEY','GOOGLE_GEMINI_BASE_URL','AGY_LLM_GATEWAY_URL','AGY_LLM_GATEWAY_API_KEY','AGY_LLM_GATEWAY_WIRE_PROTOCOL','AGY_LLM_GATEWAY_MODELS'
-    $was = @{}
-    foreach ($n in $names) { $was[$n] = [Environment]::GetEnvironmentVariable($n, 'Process') }
-    foreach ($n in $names) { [Environment]::SetEnvironmentVariable($n, $null, 'Process') }
-    $env:AGY_LLM_GATEWAY_URL = $start.AGY_LLM_GATEWAY_URL
-    $env:AGY_LLM_GATEWAY_API_KEY = $start.AGY_LLM_GATEWAY_API_KEY
-    $env:AGY_LLM_GATEWAY_WIRE_PROTOCOL = $start.AGY_LLM_GATEWAY_WIRE_PROTOCOL
-    $env:AGY_LLM_GATEWAY_MODELS = ''
-    try {
-        if (@($args | Where-Object { "$_" -match '^--?model(=|$)' }).Count) { & $real @args } else { & $real --model $start.model @args }
-    } finally {
-        foreach ($n in $names) { [Environment]::SetEnvironmentVariable($n, $was[$n], 'Process') }
-    }
+    & $real @args
 }`
 	}
 	q := "'" + strings.ReplaceAll(prog, "'", `'\''`) + "'"
 	// "function": a name the user aliased isn't expanded where it is defined
-	return "function agy {\n  if [ -x " + q + " ]; then " + q + ` agy run "$@"; else command agy "$@"; fi` + "\n}"
+	return "function agy {\n  if [ -x " + q + " ]; then\n    " + q + " agy run \"$@\"\n    if [ $? -eq 0 ]; then return; fi\n  fi\n  command agy \"$@\"\n}"
 }
 
 // agyDistroProfiles are the profiles of a WSL distro's shells the
@@ -491,7 +475,11 @@ func agyIn(at place) *Agent {
 				}
 				return noticeAgyTyped.say("profiles", strings.Join(in, ", "), "command", command)
 			}
-			return noticeAgy.say("command", command)
+			n := noticeAgy.say("command", command)
+			if distro {
+				n += " A WSL terminal already open needs reopening, or its Launch command rerun, after Default or a model change."
+			}
+			return n
 		},
 		Check: func() string {
 			st := agyReadState(stateKey)
@@ -499,7 +487,7 @@ func agyIn(at place) *Agent {
 				if _, old := agyOldWiring(path); old {
 					return "Antigravity CLI's settings.json still has magpie's old modelProvider and custom models, so it asks Google directly; magpie couldn't clean them"
 				}
-				return "magpie's Antigravity CLI stash record can't be read"
+				return "magpie's Antigravity CLI stash record can't be read; it is stored as " + stateKey + "; Pick agy's model again to rebuild it"
 			}
 			if !st.On() {
 				return ""
@@ -540,6 +528,14 @@ func agyIn(at place) *Agent {
 				return withVia(nil, "agy", magpieID+"/")
 			},
 		}},
+		Owned: func() bool {
+			if agyReadState(stateKey).On() {
+				return true
+			}
+			_, old := agyOldWiring(path)
+			return old
+		},
+		Unwire: func() error { return agyChange(id, path, "", "migrate") },
 	}
 }
 
@@ -593,6 +589,11 @@ func agyOldWiring(path string) (ref string, ok bool) {
 }
 
 func agyOldWiringClean(clean []byte) (ref string, ok bool) {
+	if m := gjson.GetBytes(clean, "model").String(); strings.HasPrefix(m, magpieID+"/") {
+		if ref := strings.TrimPrefix(m, magpieID+"/"); ref != "" {
+			return ref, true
+		}
+	}
 	if gjson.GetBytes(clean, "modelProvider").String() != "gemini" {
 		return "", false
 	}
@@ -613,11 +614,6 @@ func agyOldWiringClean(clean []byte) (ref string, ok bool) {
 	if first == "" {
 		return "", false
 	}
-	if m := gjson.GetBytes(clean, "model").String(); strings.HasPrefix(m, magpieID+"/") {
-		if r := strings.TrimPrefix(m, magpieID+"/"); r != "" {
-			return r, true
-		}
-	}
 	return first, true
 }
 
@@ -630,6 +626,9 @@ func agyMigrate(id, path string, raw []byte, m map[string]string, s agyState) ([
 	settings := gjson.ParseBytes(jsonc.ToJSON(raw))
 	old := false
 	keep := map[string]json.RawMessage{}
+	if m := settings.Get("model").String(); strings.HasPrefix(m, magpieID+"/") && strings.TrimPrefix(m, magpieID+"/") != "" {
+		old = true
+	}
 	settings.Get(agyModels).ForEach(func(k, v gjson.Result) bool {
 		if strings.HasPrefix(k.String(), magpieID+"/") && v.Get("apiProvider").String() == "API_PROVIDER_GOOGLE_GEMINI" {
 			old = true

@@ -71,8 +71,9 @@ func TestQuitListsWiredAgents(t *testing.T) {
 		{ID: "codex", Name: "Codex", Icon: "openai", Joined: yes},
 		{ID: "claude", Name: "Claude Code", Icon: "claude"},
 		{ID: "hermes", Name: "Hermes", Icon: "hermes", Beside: yes},
+		{ID: "agy", Name: "Antigravity CLI", Icon: "antigravity-color", Owned: yes},
 	})
-	want := []quitAgentJSON{{ID: "codex", Name: "Codex", Icon: "openai"}, {ID: "hermes", Name: "Hermes", Icon: "hermes"}}
+	want := []quitAgentJSON{{ID: "codex", Name: "Codex", Icon: "openai"}, {ID: "hermes", Name: "Hermes", Icon: "hermes"}, {ID: "agy", Name: "Antigravity CLI", Icon: "antigravity-color"}}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("wired agents = %+v, want %+v", got, want)
 	}

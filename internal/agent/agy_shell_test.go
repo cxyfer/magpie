@@ -48,7 +48,7 @@ func TestAgyShell(t *testing.T) {
 	}
 	for _, p := range in {
 		b, _ := os.ReadFile(p)
-		if s := string(b); !strings.HasPrefix(s, mine+"\n# >>> magpie agy >>>\nfunction agy {\n") || !strings.Contains(s, ` agy run "$@"; else command agy "$@"; fi`) || !strings.HasSuffix(s, "}\n# <<< magpie agy <<<\n") {
+		if s := string(b); !strings.HasPrefix(s, mine+"\n# >>> magpie agy >>>\nfunction agy {\n") || !strings.Contains(s, " agy run \"$@\"\n    if [ $? -eq 0 ]; then return; fi") || !strings.HasSuffix(s, "}\n# <<< magpie agy <<<\n") {
 			t.Fatalf("%s:\n%s", p, s)
 		}
 	}
@@ -102,13 +102,19 @@ func TestAgyShell(t *testing.T) {
 func TestAgyFunction(t *testing.T) {
 	prog := "/Users/o'neil/magpie"
 	for kind, want := range map[string]string{
-		"posix":      `if [ -x '/Users/o'\''neil/magpie' ]; then '/Users/o'\''neil/magpie' agy run "$@"; else command agy "$@"; fi`,
+		"posix":      `'/Users/o'\''neil/magpie' agy run "$@"`,
 		"fish":       `'/Users/o\'neil/magpie' agy run $argv`,
-		"powershell": `foreach ($l in @(& '/Users/o''neil/magpie' agy env))`,
+		"powershell": `& '/Users/o''neil/magpie' agy run @args`,
 	} {
 		if got := agyFunction(kind, prog); !strings.Contains(got, want) {
 			t.Errorf("%s:\n%s\nwant it to have %s", kind, got, want)
 		}
+	}
+	if got := agyFunction("fish", prog); !strings.Contains(got, "if test $status -eq 0") {
+		t.Errorf("fish function does not fall back after magpie failure:\n%s", got)
+	}
+	if got := agyFunction("powershell", prog); !strings.Contains(got, "$LASTEXITCODE -eq 0") {
+		t.Errorf("PowerShell function does not fall back after magpie failure:\n%s", got)
 	}
 	fish := agyDistroFunction("fish", "agy-key", "http://127.0.0.1:3425", "deepseek/pro")
 	if !strings.Contains(fish, "AGY_LLM_GATEWAY_WIRE_PROTOCOL=openai agy $argv") || strings.Contains(fish, "command agy") {

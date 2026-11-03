@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -212,7 +213,9 @@ func TestAgyMigrateOldSettings(t *testing.T) {
   "modelProvider": "gemini",
   "trustedWorkspaces": ["/w"]
 }
+
 `
+
 	type want struct {
 		model, provider                      string
 		modelSet, providerSet, mark          bool
@@ -332,6 +335,56 @@ func TestAgyMigrateOldSettings(t *testing.T) {
 	}
 }
 
+func TestAgyMigrateModelPrefixWithoutCustomModels(t *testing.T) {
+	_, _, path, mark := agyTestHome(t)
+	agyWrite(t, path, `{"model":"magpie/deepseek/pro","trustedWorkspaces":["/w"]}`)
+	a, err := Find("agy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	if m, ok := edit.GetJSON(path, "model"); ok || m != "" {
+		t.Fatalf("legacy magpie model survived: %q (%v)", m, ok)
+	}
+	if got, ok := edit.GetJSON(path, "trustedWorkspaces"); !ok || got != `["/w"]` {
+		t.Fatalf("trustedWorkspaces changed: %q (%v)", got, ok)
+	}
+	if s := agyReadState(mark); !s.On() || s.Model != "deepseek/pro" {
+		t.Fatalf("migration state: %+v", s)
+	}
+}
+
+func TestAgyOldWiringRecognizesModelPrefix(t *testing.T) {
+	_, _, path, _ := agyTestHome(t)
+	agyWrite(t, path, `{"model":"magpie/deepseek/pro","trustedWorkspaces":["/w"]}`)
+	a, err := Find("agy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stashPath(), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if c := a.Check(); !strings.Contains(c, "old modelProvider") {
+		t.Fatalf("old model prefix was not reported: %q", c)
+	}
+}
+
+func TestAgyConnectUnreachedDoesNotTouchSettings(t *testing.T) {
+	home, _, path, _ := agyTestHome(t)
+	agyWrite(t, path, `{"model":"mine","modelProvider":"vertex"}`)
+	a := agy(home)
+	reached := errors.New("unresolved WSL agy path")
+	a.unreached = reached
+	if err := a.Connect(); !errors.Is(err, reached) {
+		t.Fatalf("Connect error %v, want %v", err, reached)
+	}
+	if got := agyFile(t, path); got != `{"model":"mine","modelProvider":"vertex"}` {
+		t.Fatalf("unreached Connect changed settings: %s", got)
+	}
+}
+
 // Check says what keeps agy off magpie: the old wiring left in its
 // settings, modelProvider gemini taking its chats to /v1beta, a model
 // magpie no longer serves, or magpie's own record unreadable. Sync repairs
@@ -399,6 +452,8 @@ func TestAgyGatewayRestore(t *testing.T) {
 		{"changed provider", `{"modelProvider":"gemini"}`, `{"modelProvider":"vertex"}`, `{"modelProvider":"vertex"}`},
 		{"empty provider", `{"modelProvider":"gemini"}`, `{"modelProvider":""}`, `{"modelProvider":""}`},
 		{"removed model", `{"model":"mine","modelProvider":"gemini"}`, `{}`, `{"modelProvider":"gemini"}`},
+		// agy 1.4.12 does not write modelProvider in Enterprise Gateway mode;
+		// a value that appears while connected is therefore an external edit.
 		{"new gemini", `{"modelProvider":"vertex"}`, `{"modelProvider":"gemini"}`, `{"modelProvider":"gemini"}`},
 	}
 	for _, c := range cases {

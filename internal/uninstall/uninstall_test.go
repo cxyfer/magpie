@@ -107,6 +107,15 @@ func TestRunOrder(t *testing.T) {
 	}
 }
 
+func TestConnectedIncludesOwnedAgent(t *testing.T) {
+	agy := &agent.Agent{ID: "agy", Name: "Antigravity CLI", Owned: func() bool { return true }}
+	fakes(t, []*agent.Agent{agy}, map[string]bool{}, nil)
+	got := Connected()
+	if len(got) != 1 || got[0] != agy {
+		t.Fatalf("owned agents = %+v, want agy", got)
+	}
+}
+
 // An agent that can't be disconnected is said, and the rest are still
 // done; Codex not among them leaves the Codex app alone.
 func TestRunSaysWhatFailed(t *testing.T) {

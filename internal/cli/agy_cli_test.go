@@ -118,6 +118,19 @@ func TestAgyRun(t *testing.T) {
 		t.Fatalf("old settings left:\n%s", b)
 	}
 
+	// An unreadable stash must not prevent the shell wrapper from starting
+	// agy as it is, with the caller's arguments and environment intact.
+	if err := os.WriteFile(filepath.Join(filepath.Dir(provider.Path()), "stash.json"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runOut(t, "agy", "run", "-p", "hi"); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(args, []string{"-p", "hi"}) || !slices.Equal(envOf("GEMINI_API_KEY"), []string{"users-own"}) ||
+		!slices.Equal(envOf("AGY_LLM_GATEWAY_URL"), []string{"https://users.example/gateway"}) {
+		t.Fatalf("unknown state did not use raw agy: args=%v gemini=%v url=%v", args, envOf("GEMINI_API_KEY"), envOf("AGY_LLM_GATEWAY_URL"))
+	}
+
 	// what --help and a stray value say
 	if out, _ := runOut(t, "agy", "--help"); !strings.Contains(out, "magpie agy run [args…]") {
 		t.Fatalf("agy --help:\n%s", out)

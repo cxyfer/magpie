@@ -55,13 +55,18 @@ Magpie models because a gateway cannot list agy's native models; pick those in
 agy after Default. Model switches update the stash, never agy's `model`.
 
 `magpie agy run` reads that state, supplies the four variables and adds `--model`
-unless the caller supplied one; PowerShell's function reads `magpie agy env`
-because Windows does not wait for the GUI executable. WSL's function carries
-its address, key and model and is rewritten by `Sync`. Local `Sync` repairs the
-shell block. `AgyStart` and `Sync` independently migrate legacy settings before
-starting or reporting a connection.
+unless the caller supplied one. If the stash is unreadable it reports a short
+warning on stderr and starts agy unchanged; `magpie agy env` still reports the
+state error. The POSIX, fish and PowerShell shell functions fall back to agy on
+PATH when the magpie command returns non-zero. WSL's function carries its
+address, key and model and is rewritten by `Sync`; an already-open WSL terminal
+must be reopened (or its Launch command rerun) after Default or a model change.
+Local `Sync` repairs the shell block. `AgyStart` and `Sync` independently migrate
+legacy settings before starting or reporting a connection.
 
-`agyMigrate` removes only the old `magpie/*` Gemini custom models. It restores
+`agyMigrate` removes only the old `magpie/*` Gemini custom models, and also
+recognizes a `model` whose value starts with `magpie/` when that custom-model
+list has already been deleted. It restores
 `model` only while it has the old `magpie/` prefix, and `modelProvider` only while
 it is `gemini`, using the legacy stash or its absence. A polluted original model
 can fall back to `<id>.connect.was`; the disconnect fix's `agy:<path>:before`
@@ -75,9 +80,14 @@ A `modelProvider` of `gemini` prevents gateway mode in agy 1.4.12 (without a
 Gemini key it refuses to start; with one it uses the Gemini API). While connected
 Magpie records and removes that key. Disconnect restores it only if the current
 key is still absent; an explicit empty value or another provider is a user's
-edit and survives. The original `model` is restored during legacy migration;
-new connections never change it. Disconnect forgets the gateway state and drops
-the shell block; later syncs leave the restored provider alone.
+edit and survives. The real agy 1.4.12 does not write `modelProvider` while it
+uses the Enterprise Gateway, so a `gemini` value that appears during a
+connection is treated as an external edit and is restored after disconnect.
+The original `model` is restored during legacy migration; new connections never
+change it. Disconnect forgets the gateway state and drops the shell block; later
+syncs leave the restored provider alone. If the state record is damaged, Check
+names `agy.state:<absolute settings path>` and tells the user to Pick agy's
+model again to rebuild it.
 
 The CLI does not write `~/.antigravity/settings.json`. Its launch environment
 wins over the desktop app's gateway there. When the CLI is disconnected it

@@ -657,6 +657,9 @@ func (a *Agent) noModelLeft() error {
 
 func (a *Agent) connect() (Connection, error) {
 	if isAgy(a.ID) && a.Path != "" {
+		if a.unreached != nil {
+			return Connection{}, a.unreached
+		}
 		// Migrate before connect.was can replace the legacy original, and
 		// reject an unreadable stash before generic bookkeeping writes it.
 		if err := agyChange(a.ID, a.Path, "", "sync"); err != nil {

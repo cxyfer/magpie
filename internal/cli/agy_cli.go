@@ -80,7 +80,8 @@ func agyRun(args []string) error {
 	env := os.Environ()
 	start, model, err := agent.AgyStart()
 	if err != nil {
-		return err
+		fmt.Fprintln(os.Stderr, "magpie: agy state is unavailable; starting agy without magpie's gateway")
+		return agyExec(bin, args, env)
 	}
 	if model != "" {
 		env = slices.DeleteFunc(env, func(kv string) bool {
