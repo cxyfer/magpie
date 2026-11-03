@@ -42,7 +42,7 @@ var quitAgents = func() []quitAgentJSON {
 func wiredAgents(as []*agent.Agent) []quitAgentJSON {
 	out := []quitAgentJSON{}
 	for _, a := range as {
-		if a.Wired() {
+		if a.Wired() || a.Owned != nil && a.Owned() {
 			out = append(out, quitAgentJSON{ID: a.ID, Name: a.Name, Icon: a.Icon})
 		}
 	}

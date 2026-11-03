@@ -167,6 +167,66 @@ something else shows up as drift.
 - Tests never touch the real machine. `TestMain` uses `testenv`, which points HOME, USERPROFILE, the XDG folders and APPDATA into a temporary folder, clears `agentenv.Vars` and puts failing stand-ins for keychain tools and agent CLIs on PATH. Agent-specific side effects (Aside, the Zed keychain, Codex's usage check) are also stubbed in `TestMain`. The one thing tests keep between runs is the pi tests' Bun install cache, `magpie-test-bun-cache-<uid>-<n>` in the temp folder (`pinnedPiCache` in `internal/plugin`), outside the test home on purpose so a run doesn't fetch the pinned pi's 118 packages again (#2865): it is used only when it is this user's alone, never as root, and is a new folder every two days, so the temp folder's cleaner never takes a file out of the one in use.
 - OmO and Prime Agent write a Gemini-capable model as `google-generative-ai` at the gateway's `/v1beta` (`piModelJSON` in [`agents.go`](../../internal/agent/agents.go)); each one's Google client takes the version path from `baseUrl` (senpi-ai's `apiVersion = ""`, Prime Agent's `pa-ai` `providers/google.rs`). omp does the same in `models.yml` (`ompProviderAt` in [`omp.go`](../../internal/agent/omp.go), #4277): its `google-generative-ai` posts to `baseUrl/models/<id>:streamGenerateContent?alt=sse` (pi-ai `providers/google.ts`, 16.0.0 to 18.14.0). Its Google client throws without a key, but under `auth: none` omp hands it its no-auth key `N/A`, which it sends as `x-goog-api-key` and loopback takes, so the provider stays keyless; a WSL omp under NAT sends its `apiKey` there. A Gemini 3 or later model thinks with `mode: google-level` (thinkingLevel MINIMAL to HIGH; xhigh and max go as HIGH), a Gemini 1.x or 2.x one with `budget`, which omp sends as `thinkingBudget: -1` (`ompGeminiMode`; `TestOmpGeminiModelsAskedOnGeminisAPI`). Checked with omp 18.14.0 against the gateway and a fake Gemini server. Pi and StepCode keep such a model on Chat, which the gateway translates (`piAsked`). StepCode registers no `google-generative-ai` stream, only `anthropic-messages`, `openai-completions` and `openai-responses` (Step-Code `packages/providers/src/compat.ts`), though its docs list it. Pi's own agent folder is read by apps that run Pi's SDK on it too: Raft's daemon (`@botiverse/raft-daemon`, pi-ai 0.83.0) opens `~/.pi/agent/models.json` and hands every request its own fetch, which pi-ai's Google adapter refuses before sending ("Custom fetch is not supported by the Google Generative AI adapter", in pi-ai 1.4.0 too; yunfei9958 on X, `TestPiFolderKeepsGeminiOnChatForRaft`). `magpieModels` in [`route.go`](../../internal/agent/route.go) includes Gemini and Code Assist capabilities when no native Chat, Responses or Messages API was selected; this includes a plugin model declaring `@ai-sdk/google`. Requests keep going through the gateway and the plugin's sign-in and fetch, with the gateway's usual translation where needed. A normal model sync updates existing entries. Routing groups retain their existing API choice, and Pencil remains on Chat. Pi resolves a level there to one of Gemini's four (minimal, low, medium, high) and throws on any other, so a level the model names otherwise is set to null in `thinkingLevelMap` (`TestPiGoogleThinkingLevelsAreGeminis`).
 
+## Antigravity CLI restoration
+
+[`agyIn`](../../internal/agent/agy.go) owns agy's model and modelProvider
+as one connection. Before its first write it saves their raw JSON, including
+whether each key existed, in the path-specific `agy:<path>:before` stash
+entry. An empty object is still a snapshot. Picking another magpie model,
+Reapply, or reconnecting after agy's own /model picker changed only model
+keeps that first snapshot.
+
+Default, Disconnect and a Sync after a native /model pick remove magpie's
+custom models and shell function. They restore modelProvider only while it
+still reads `gemini`, the value magpie wrote: a provider the user changed
+stands. A `gemini` or empty string present before connecting is restored
+as such, and an absent key is removed. Without a snapshot or recognizable
+legacy connection record magpie leaves modelProvider alone. Disconnect
+without a snapshot still removes a magpie model and magpie custom models.
+A model that is already native stays, including a native default with no
+model key; Disconnect's generic field clearing and `.connect.was` fallback
+never supersede that choice. The user's own custom models and unrelated settings
+stay.
+
+`agyBefore` also reads the former per-field `:model` and `:modelProvider`
+stash entries. Reconnecting migrates them into the single snapshot; cleanup
+consumes them only after success. Legacy empty strings were never saved,
+so their absence cannot be distinguished retrospectively. An old applied
+record with magpie's writes still in settings also identifies a
+legacy connection whose originals were absent. A new Connect's
+`.connect.was` record alone, before any magpie write, does not own the
+existing settings. An old snapshot already overwritten with magpie's
+`gemini` cannot be distinguished from an original `gemini` the user owned;
+that saved value is restored.
+
+A failed settings or stash read, invalid JSON, or failed write leaves the
+snapshot available for retry. Config and stash edits roll back together;
+shell cleanup is best effort and logs failures without undoing a successful
+settings restore. `stashLoadKnown` uses a separate strict parser and cache
+kind; the shared stash reader and empty-string convention are unchanged.
+Empty or whitespace-only settings and stash files are known empty.
+Connect checks agy's snapshot before its generic stash writes. Disconnect
+calls agy's owner before those writes, including when Wired is false.
+
+Sync reads the current model under the stash lock, through the fresh edit
+reader. A poll's cached native model cannot undo a connection written since.
+Connected Sync refreshes the catalog without reading the stash, so unknown
+originals do not block a catalog update. The model catalog is collected
+before taking the lock. `Agent.Owned`, set only by agy, tells uninstall and
+the quit question that a native /model pick still has settings to restore.
+An unowned, unwired Disconnect leaves bookkeeping alone.
+An unresolved WSL path refuses Unwire too; explicitly disconnecting a stopped
+distro starts it first, or returns its start error without consuming the
+snapshot. After a stopped distro's cleanup, its cached field values are
+saved too, so the list and reconnect record reflect the restored settings. An
+unreadable stash alone does not put an unconnected native agy in quit's
+list; magpie model or custom model traces are required in that case.
+
+Before the next Sync, `magpie agy run` does not repair a native /model pick's
+provider. The first CLI default with a snapshot preserves the native model;
+a second default without one resets the model field, as other field defaults
+do.
+
 ## Verification
 
 ```sh

@@ -101,7 +101,7 @@ var codexAppWait = 30 * time.Second
 func Connected() []*agent.Agent {
 	var out []*agent.Agent
 	for _, a := range agents() {
-		if wired(a) {
+		if wired(a) || a.Owned != nil && a.Owned() {
 			out = append(out, a)
 		}
 	}

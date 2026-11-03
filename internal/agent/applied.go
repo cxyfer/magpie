@@ -656,6 +656,11 @@ func (a *Agent) noModelLeft() error {
 }
 
 func (a *Agent) connect() (Connection, error) {
+	if isAgy(a.ID) {
+		if err := agyConnectKnown(a); err != nil {
+			return Connection{}, err
+		}
+	}
 	forget(a.ID + disconnectedKey)
 	// what it is on now, for Disconnect to put back what it can't
 	// otherwise (Goose's own model)
@@ -834,8 +839,19 @@ func (a *Agent) Disconnect() (err error) {
 		}
 		return a.Native.Execute(plan)
 	}
-	if !a.Wired() {
+	// agy's /model changes only its model: a saved connection can still
+	// own the provider and custom models after Wired becomes false.
+	agy := isAgy(a.ID)
+	if !a.Wired() && (a.Owned == nil || !a.Owned()) {
 		return nil
+	}
+	before, rec := a.Values(), appliedOf(a.ID)
+	if agy && a.Unwire != nil {
+		// agy's snapshot must be read and restored before the generic
+		// stash writes: an unreadable stash is unknown, not no original.
+		if err := a.Unwire(); err != nil {
+			return err
+		}
 	}
 	// the user's say, kept till they connect it again: nothing magpie does
 	// by itself (a start's Sync, Codex's account failover) puts magpie back
@@ -843,28 +859,37 @@ func (a *Agent) Disconnect() (err error) {
 	stash(map[string]string{a.ID + disconnectedKey: "1"})
 	// the user's own say over a harness Kiro Crew's connect put on
 	kiroCrewUserLeft(a.ID)
-	before, rec := a.Values(), appliedOf(a.ID)
-	if a.Unwire != nil {
+	if !agy {
+		before, rec = a.Values(), appliedOf(a.ID)
+	}
+	if !agy && a.Unwire != nil {
 		if err := a.Unwire(); err != nil {
 			return err
 		}
 	}
-	for _, f := range a.Fields {
-		vals := a.Values()
-		v := vals[f.Key]
-		// set by magpie: as it set it, or its group by the model's name
-		set := v != "" && (rec.Fields[f.Key] == v || sameGroup(rec.Fields[f.Key], v)) && before[f.Key] == v
-		if v == "" || !set && v != magpieID && !magpieValue(a, f, v, vals) {
-			continue
-		}
-		if err := f.Set(""); err != nil {
-			return fmt.Errorf("%s: %w", f.Label, err)
+	if !agy {
+		for _, f := range a.Fields {
+			vals := a.Values()
+			v := vals[f.Key]
+			// set by magpie: as it set it, or its group by the model's name
+			set := v != "" && (rec.Fields[f.Key] == v || sameGroup(rec.Fields[f.Key], v)) && before[f.Key] == v
+			if v == "" || !set && v != magpieID && !magpieValue(a, f, v, vals) {
+				continue
+			}
+			if err := f.Set(""); err != nil {
+				return fmt.Errorf("%s: %w", f.Label, err)
+			}
 		}
 	}
 	// a field its own Set left empty goes back to what it was on before
 	// Connect (Goose's own provider and model)
 	var was map[string]string
 	json.Unmarshal([]byte(unstash(a.ID+".connect.was")), &was)
+	if agy {
+		// agy's raw snapshot already restored its model, including an
+		// absent/empty original. A native /model pick takes precedence.
+		was = nil
+	}
 	after := a.Values()
 	// connected while on a provider named magpie it had by hand: what it
 	// was on then is magpie's route, its thinking level read off it too

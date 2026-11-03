@@ -27,7 +27,10 @@ package agent
 // from the row.
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
+	"log"
 	"os"
 	"path"
 	"path/filepath"
@@ -208,24 +211,25 @@ func agy(home string) *Agent { return agyIn(here(home)) }
 // shells get a function of their own (agyDistroFunction).
 func agyIn(at place) *Agent {
 	home := at.home
+	id := "agy"
+	if at.id != "" {
+		id = at.id
+	}
 	dir := at.open(filepath.Join(home, ".gemini", "antigravity-cli"))
 	path := filepath.Join(dir, "settings.json")
 	get := jsonGet(path, "model")
 	provider := jsonGet(path, "modelProvider")
-	stashModel, stashProvider := "agy:"+path+":model", "agy:"+path+":modelProvider"
 	// setModels writes customModels with the user's own and, when with,
 	// magpie's; none left takes the key out
-	setModels := func(with bool) error {
+	setModels := func(with map[string]any) error {
 		ms := map[string]any{}
 		for k, v := range agyCustom(path) {
 			if !strings.HasPrefix(k, magpieID+"/") {
 				ms[k] = v
 			}
 		}
-		if with {
-			for _, m := range sharedModels("agy") {
-				ms[magpieID+"/"+m.ID] = map[string]string{"apiProvider": "API_PROVIDER_GOOGLE_GEMINI", "modelName": m.ID}
-			}
+		for k, v := range with {
+			ms[k] = v
 		}
 		if len(ms) > 0 {
 			return edit.SetJSON(path, edit.KV{Path: agyModels, Value: ms})
@@ -237,13 +241,6 @@ func agyIn(at place) *Agent {
 			return edit.DelJSON(path, "customModelsConfig")
 		}
 		return nil
-	}
-	// put sets key to v, or takes it out for ""
-	put := func(key, v string) error {
-		if v == "" {
-			return edit.DelJSON(path, key)
-		}
-		return edit.SetJSON(path, edit.KV{Path: key, Value: v})
 	}
 	// the function agy, in this machine's shells or the distro's
 	distro := at.sys != nil
@@ -260,6 +257,17 @@ func agyIn(at place) *Agent {
 			update.DropShellFunctionAt(agyDistroProfiles(at), "agy")
 		}
 	}
+	dropShell := func() {
+		var err error
+		if distro {
+			err = update.DropShellFunctionAt(agyDistroProfiles(at), "agy")
+		} else if here, _ := homes(); here == home {
+			err = update.DropShellFunction("agy")
+		}
+		if err != nil {
+			log.Printf("agy shell function cleanup: %v", err)
+		}
+	}
 	shellIn := func() []string {
 		if !distro {
 			return update.ShellFunctionIn("agy")
@@ -271,6 +279,146 @@ func agyIn(at place) *Agent {
 			return AgyLaunch(model)
 		}
 		return agyLaunchAt(gw(), key(), model, false)
+	}
+	magpiePick := func(v string) bool {
+		ref, ok := strings.CutPrefix(v, magpieID+"/")
+		return ok && isMagpie(ref)
+	}
+	// The snapshot owns these two fields until cleanup commits. A native
+	// /model pick changes only model, so it cannot also mean ownership ended.
+	change := func(v, how string) error {
+		on := magpiePick(v)
+		var models map[string]any
+		if on || how == "sync" {
+			models = map[string]any{}
+			for _, m := range sharedModels("agy") {
+				models[magpieID+"/"+m.ID] = map[string]string{"apiProvider": "API_PROVIDER_GOOGLE_GEMINI", "modelName": m.ID}
+			}
+		}
+		stashMu.Lock()
+		defer stashMu.Unlock()
+		return edit.Atomically(func() error {
+			raw, err := edit.Read(path)
+			if err != nil {
+				return err
+			}
+			// A missing file is known empty; malformed bytes are unknown.
+			settings := gjson.ParseBytes(jsonc.ToJSON(raw))
+			if len(bytes.TrimSpace(raw)) > 0 && (!edit.ValidJSONC(raw) || !settings.IsObject()) {
+				return fmt.Errorf("%s: invalid settings JSON object", path)
+			}
+			cur := settings.Get("model").String()
+			if how == "sync" && usesMagpie(cur) {
+				return setModels(models)
+			}
+			m, err := stashLoadKnown()
+			if err != nil {
+				return err
+			}
+			// Older versions had no explicit snapshot for absent originals.
+			// Their applied record proves ownership only beside their writes;
+			// a new Connect's .connect.was record predates its first write.
+			legacy := usesMagpie(cur)
+			for k := range agyCustom(path) {
+				legacy = legacy || strings.HasPrefix(k, magpieID+"/")
+			}
+			before, owned, err := agyBefore(m, path, id, legacy)
+			if err != nil {
+				return err
+			}
+			if on {
+				if !owned {
+					before = map[string]json.RawMessage{}
+					if !usesMagpie(cur) {
+						for _, k := range []string{"model", "modelProvider"} {
+							if value := settings.Get(k); value.Exists() {
+								before[k] = json.RawMessage(value.Raw)
+							}
+						}
+					}
+				}
+				b, _ := json.Marshal(before)
+				m["agy:"+path+":before"] = string(b)
+				if err := stashWrite(m); err != nil {
+					return err
+				}
+				if err := setModels(models); err != nil {
+					return err
+				}
+				return edit.SetJSON(path, edit.KV{Path: "modelProvider", Value: "gemini"}, edit.KV{Path: "model", Value: v})
+			}
+			if how != "pick" && !owned && !usesMagpie(cur) {
+				dropShell()
+				return nil
+			}
+			var set []edit.KV
+			var del []string
+			restore := func(k string) {
+				if value, ok := before[k]; ok {
+					set = append(set, edit.KV{Path: k, Value: value})
+				} else {
+					del = append(del, k)
+				}
+			}
+			if owned && settings.Get("modelProvider").String() == "gemini" {
+				restore("modelProvider")
+			}
+			switch {
+			case v != "":
+				set = append(set, edit.KV{Path: "model", Value: v})
+			case owned && usesMagpie(cur):
+				restore("model")
+			case !owned:
+				// Without originals, remove a disconnected magpie model,
+				// but leave the provider alone.
+				del = append(del, "model")
+			}
+			if err := setModels(nil); err != nil {
+				return err
+			}
+			raw, err = edit.Read(path)
+			if err != nil {
+				return err
+			}
+			out, err := edit.PatchJSON(raw, set, del)
+			if err != nil {
+				return err
+			}
+			if err := edit.WriteAtomic(path, out); err != nil {
+				return err
+			}
+			dropShell()
+			if !owned {
+				return nil
+			}
+			delete(m, "agy:"+path+":before")
+			delete(m, "agy:"+path+":model")
+			delete(m, "agy:"+path+":modelProvider")
+			delete(m, id+".connect.was")
+			if err := stashWrite(m); err != nil {
+				return err
+			}
+			return nil
+		}, path, stashPath())
+	}
+	unwire := func() error { return change("", "disconnect") }
+	owned := func() bool {
+		stashMu.Lock()
+		defer stashMu.Unlock()
+		legacy := at.cold || usesMagpie(get())
+		if !legacy {
+			for k := range agyCustom(path) {
+				legacy = legacy || strings.HasPrefix(k, magpieID+"/")
+			}
+		}
+		m, err := stashLoadKnown()
+		if err != nil {
+			// Unknown originals stop cleanup only where magpie's writes
+			// remain; an unrelated stash error doesn't own native settings.
+			return !at.cold && legacy
+		}
+		_, pending, err := agyBefore(m, path, id, legacy)
+		return pending || err != nil
 	}
 	return &Agent{
 		ID: "agy", Name: "Antigravity CLI", Icon: "antigravity-color", Aliases: []string{"antigravity-cli"}, Spelled: prefixed, NoNames: true,
@@ -287,13 +435,16 @@ func agyIn(at place) *Agent {
 			}
 			return "agy"
 		},
+		Owned:  owned,
+		Unwire: unwire,
 		Sync: func() error {
-			on := usesMagpie(get())
-			shell(on)
-			if !on {
-				return nil
+			if err := change("", "sync"); err != nil {
+				return err
 			}
-			return setModels(true)
+			if usesMagpie(get()) {
+				shell(true)
+			}
+			return nil
 		},
 		Notice: func() string {
 			v := get()
@@ -338,38 +489,13 @@ func agyIn(at place) *Agent {
 			Key: "model", Label: "model",
 			Get: get,
 			Set: func(v string) error {
-				cur := get()
-				if ref, ok := strings.CutPrefix(v, magpieID+"/"); ok && isMagpie(ref) {
-					if !usesMagpie(cur) {
-						stash(map[string]string{stashModel: cur, stashProvider: provider()})
-					}
-					if err := setModels(true); err != nil {
-						return err
-					}
-					if err := edit.SetJSON(path, edit.KV{Path: "modelProvider", Value: "gemini"}, edit.KV{Path: "model", Value: v}); err != nil {
-						return err
-					}
-					shell(true)
-					return nil
-				}
-				if usesMagpie(cur) {
-					// back to what the user had
-					if v == "" {
-						v = unstash(stashModel)
-					} else {
-						forget(stashModel)
-					}
-					if err := put("modelProvider", unstash(stashProvider)); err != nil {
-						return err
-					}
-				}
-				if err := put("model", v); err != nil {
+				if err := change(v, "pick"); err != nil {
 					return err
 				}
-				if usesMagpie(cur) {
-					shell(false)
+				if magpiePick(v) {
+					shell(true)
 				}
-				return setModels(false)
+				return nil
 			},
 			Options: func(cur map[string]string) []Option {
 				custom := agyCustom(path)
@@ -395,6 +521,52 @@ func agyIn(at place) *Agent {
 			},
 		}},
 	}
+}
+
+// agyBefore reads the explicit snapshot, or the old per-field stash. Old
+// versions left no keys for absent originals; an applied record
+// still proves that magpie owns that connection. Empty legacy values were
+// never recorded, so only the new snapshot can distinguish them from absent.
+func agyBefore(m map[string]string, path, id string, legacy bool) (map[string]json.RawMessage, bool, error) {
+	key := "agy:" + path + ":"
+	if b, ok := m[key+"before"]; ok {
+		var before map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(b), &before); err != nil {
+			return nil, true, fmt.Errorf("agy snapshot: %w", err)
+		}
+		if before == nil {
+			return nil, true, fmt.Errorf("agy snapshot is not a JSON object")
+		}
+		return before, true, nil
+	}
+	before := map[string]json.RawMessage{}
+	owned := false
+	for _, k := range []string{"model", "modelProvider"} {
+		if value, ok := m[key+k]; ok {
+			b, _ := json.Marshal(value)
+			before[k], owned = b, true
+		}
+	}
+	if !owned && legacy {
+		owned = usesMagpie(appliedOf(id).Fields["model"])
+	}
+	return before, owned, nil
+}
+
+func isAgy(id string) bool { return id == "agy" || strings.HasPrefix(id, "agy@wsl:") }
+
+// agyConnectKnown checks the owner before Connect's generic stash writes.
+// Otherwise forget/connect.was could replace an unreadable stash before
+// the field setter gets the chance to reject an unknown original.
+func agyConnectKnown(a *Agent) error {
+	stashMu.Lock()
+	defer stashMu.Unlock()
+	m, err := stashLoadKnown()
+	if err != nil {
+		return err
+	}
+	_, _, err = agyBefore(m, a.Path, a.ID, false)
+	return err
 }
 
 // what agy says after a change (notice.go)

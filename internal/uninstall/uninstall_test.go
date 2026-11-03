@@ -228,3 +228,11 @@ func TestAfterExit(t *testing.T) {
 		t.Fatalf("report %+v", r)
 	}
 }
+
+func TestConnectedIncludesAgyRestoration(t *testing.T) {
+	a := &agent.Agent{ID: "agy", Owned: func() bool { return true }}
+	fakes(t, []*agent.Agent{a, {ID: "claude"}}, map[string]bool{}, nil)
+	if got := Connected(); len(got) != 1 || got[0] != a {
+		t.Fatalf("pending restore lost: %v", got)
+	}
+}

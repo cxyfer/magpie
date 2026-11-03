@@ -1,8 +1,10 @@
 package agent
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log"
 	"maps"
@@ -55,6 +57,33 @@ func stashRead(read func(kind, path string, parse func([]byte) (map[string]strin
 		return out, nil
 	})
 	return m
+}
+
+func parseStash(b []byte) (map[string]string, error) {
+	if len(bytes.TrimSpace(b)) == 0 {
+		return map[string]string{}, nil
+	}
+	var out map[string]string
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil, err
+	}
+	if out == nil {
+		return nil, fmt.Errorf("stash is not a JSON object")
+	}
+	return out, nil
+}
+
+// stashLoadKnown is a fresh, private stash for an edit that must leave an
+// unreadable original alone. Only a missing file means no saved values.
+func stashLoadKnown() (map[string]string, error) {
+	m, err := filememo.ReadNow("stash-known", stashPath(), parseStash)
+	if errors.Is(err, fs.ErrNotExist) {
+		return map[string]string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return maps.Clone(m), nil
 }
 
 // stashWrite writes m as the stash, a file there that doesn't parse kept

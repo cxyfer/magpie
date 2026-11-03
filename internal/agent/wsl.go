@@ -1008,6 +1008,9 @@ func unreached(a *Agent, err error) *Agent {
 	if a.Sync != nil {
 		a.Sync = func() error { return err }
 	}
+	if a.Unwire != nil {
+		a.Unwire = func() error { return err }
+	}
 	return a
 }
 
@@ -1049,6 +1052,24 @@ func asleep(live *Agent, k wslKind, d distro) *Agent {
 			}
 			return noticeWSLAsleep.say("distro", d.Name)
 		}}
+	if isAgy(live.ID) {
+		a.Owned = live.Owned
+		a.Unwire = func() error {
+			if _, err := wslRun(time.Minute, "-d", d.Name, "-e", "true"); err != nil {
+				return fmt.Errorf("start WSL %s: %w", d.Name, err)
+			}
+			started = true
+			w := d
+			w.Running = true
+			warm := wslAgent(k, w)
+			err := warm.Unwire()
+			for _, f := range warm.Fields {
+				wslRemember(d.Name, k.memo(f.Key), f.Get())
+			}
+			wslSave()
+			return err
+		}
+	}
 	for _, lf := range live.Fields {
 		key := lf.Key
 		f := Field{Key: key, Label: lf.Label, Quiet: lf.Quiet, Live: lf.Live, Follows: lf.Follows, Options: lf.Options,

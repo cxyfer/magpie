@@ -8,7 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yetone/magpie/internal/agent"
+	"github.com/yetone/magpie/internal/edit"
 	"github.com/yetone/magpie/internal/gateway"
+	"github.com/yetone/magpie/internal/provider"
 )
 
 // `magpie agy run`, what the function agy in the user's shells runs
@@ -86,5 +89,66 @@ func TestAgyRun(t *testing.T) {
 	agyLook = func() (string, error) { return "", errors.New("not found") }
 	if _, err := runOut(t, "agy", "run"); err == nil || !strings.Contains(err.Error(), "isn't installed") {
 		t.Fatalf("no agy: %v", err)
+	}
+}
+
+func TestAgyDefaultAfterNativePick(t *testing.T) {
+	for _, c := range []struct {
+		name                    string
+		reconnect, lostSnapshot bool
+	}{{name: "native"}, {name: "reconnect", reconnect: true}, {name: "lost-snapshot", lostSnapshot: true}} {
+		t.Run(c.name, func(t *testing.T) {
+			home := helpHome(t)
+			if err := provider.Save(provider.Provider{ID: "relay", Chat: "http://127.0.0.1:1/v1", Key: "k", Models: []string{"pro"}}); err != nil {
+				t.Fatal(err)
+			}
+			settings := filepath.Join(home, ".gemini", "antigravity-cli", "settings.json")
+			os.MkdirAll(filepath.Dir(settings), 0o755)
+			os.WriteFile(settings, []byte(`{"model":"before","modelProvider":"vertex"}`), 0o644)
+			if err := run([]string{"agy", "relay/pro"}); err != nil {
+				t.Fatal(err)
+			}
+			if c.lostSnapshot {
+				a, err := agent.Find("agy")
+				if err != nil {
+					t.Fatal(err)
+				}
+				a.Keep()
+				if err := os.WriteFile(filepath.Join(filepath.Dir(provider.Path()), "stash.json"), []byte("{}"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err := edit.SetJSON(settings, edit.KV{Path: "model", Value: "gemini-native"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if c.reconnect {
+				if err := run([]string{"agy", "relay/pro"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := run([]string{"agy", "default"}); err != nil {
+				t.Fatal(err)
+			}
+			wantProvider := "vertex"
+			if c.lostSnapshot {
+				wantProvider = "gemini"
+			}
+			if p, _ := edit.GetJSON(settings, "modelProvider"); p != wantProvider {
+				t.Errorf("default left provider %q, want %s", p, wantProvider)
+			}
+			if c.lostSnapshot {
+				if m, _ := edit.GetJSON(settings, "model"); m != "" {
+					t.Errorf("default left magpie model %q", m)
+				}
+				if m, _ := edit.GetJSON(settings, "customModelsConfig.customModels"); strings.Contains(m, "magpie/") {
+					t.Errorf("default left magpie catalog %s", m)
+				}
+			} else if !c.reconnect {
+				if m, _ := edit.GetJSON(settings, "model"); m != "gemini-native" {
+					t.Errorf("default lost native model: %q", m)
+				}
+			}
+		})
 	}
 }
