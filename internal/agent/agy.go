@@ -7,7 +7,15 @@ package agent
 // the one picked being "model". magpie's gateway speaks the Gemini API, so
 // magpie adds one custom model per catalog model, keyed
 // "magpie/<provider>/<model>", and sets modelProvider and model; the user's
-// own are stashed and put back when magpie steps out. The endpoint and key
+// own are stashed and put back when magpie steps out. Removing magpie's
+// models and shell function is separate from restoring modelProvider:
+// only an exact saved original (the snapshot or old per-field stash) lets
+// magpie restore or delete that field. Without one, it leaves the current
+// provider untouched. A v0.1.2862 snapshot that saved magpie's "gemini" as
+// the original cannot be distinguished from a user's original "gemini".
+// WSL snapshots use the opened path, including
+// `\\wsl.localhost\Ubuntu\...`, under `agy:<path>:before`; other agy stash
+// keys use the row id, such as `agy@wsl:Ubuntu.connect.was`. The endpoint and key
 // agy takes only from its environment (GOOGLE_GEMINI_BASE_URL and
 // GEMINI_API_KEY; no .env file), so magpie can't set them: the agent's row
 // gives the command that starts agy with them (see Agent.Launch). That
@@ -47,6 +55,28 @@ import (
 )
 
 const agyModels = "customModelsConfig.customModels"
+
+func agyHasMagpieModels(path string) bool {
+	for k := range agyCustom(path) {
+		if strings.HasPrefix(k, magpieID+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// AgyHasMagpieArtifacts reports whether agy's settings still contain magpie
+// artifacts that need cleaning, even when its model is native.
+func AgyHasMagpieArtifacts(a *Agent) bool {
+	if a == nil || !isAgy(a.ID) {
+		return false
+	}
+	model := ""
+	if f := a.Field("model"); f != nil {
+		model = f.Get()
+	}
+	return usesMagpie(model) || agyHasMagpieModels(a.Path)
+}
 
 // AgyLaunch is the command that starts agy on magpie's gateway and one of
 // its custom models, in the shell of this system. Its key names agy: its
@@ -318,16 +348,22 @@ func agyIn(at place) *Agent {
 			// Older versions had no explicit snapshot for absent originals.
 			// Their applied record proves ownership only beside their writes;
 			// a new Connect's .connect.was record predates its first write.
-			legacy := usesMagpie(cur)
-			for k := range agyCustom(path) {
-				legacy = legacy || strings.HasPrefix(k, magpieID+"/")
-			}
+			hasMagpieModels := agyHasMagpieModels(path)
+			legacy := usesMagpie(cur) || hasMagpieModels
 			before, owned, err := agyBefore(m, path, id, legacy)
 			if err != nil {
 				return err
 			}
+			_, hasSnapshot := m["agy:"+path+":before"]
+			_, hasLegacyModel := m["agy:"+path+":model"]
+			_, hasLegacyProvider := m["agy:"+path+":modelProvider"]
+			hasOriginal := hasSnapshot || hasLegacyModel || hasLegacyProvider
+			// A magpie model or custom-model entry is sufficient ownership
+			// for cleanup, not evidence of the original provider value.
+			owned = owned || legacy
 			if on {
-				if !owned {
+				delete(m, "agy:"+path+":provider-unknown")
+				if !hasOriginal {
 					before = map[string]json.RawMessage{}
 					if !usesMagpie(cur) {
 						for _, k := range []string{"model", "modelProvider"} {
@@ -347,10 +383,11 @@ func agyIn(at place) *Agent {
 				}
 				return edit.SetJSON(path, edit.KV{Path: "modelProvider", Value: "gemini"}, edit.KV{Path: "model", Value: v})
 			}
-			if how != "pick" && !owned && !usesMagpie(cur) {
+			if how != "pick" && !owned && !usesMagpie(cur) && !hasMagpieModels {
 				dropShell()
 				return nil
 			}
+			providerOriginalKnown := hasSnapshot || hasLegacyProvider || hasLegacyModel
 			var set []edit.KV
 			var del []string
 			restore := func(k string) {
@@ -360,7 +397,7 @@ func agyIn(at place) *Agent {
 					del = append(del, k)
 				}
 			}
-			if owned && settings.Get("modelProvider").String() == "gemini" {
+			if providerOriginalKnown && settings.Get("modelProvider").String() == "gemini" {
 				restore("modelProvider")
 			}
 			switch {
@@ -368,7 +405,7 @@ func agyIn(at place) *Agent {
 				set = append(set, edit.KV{Path: "model", Value: v})
 			case owned && usesMagpie(cur):
 				restore("model")
-			case !owned:
+			case !owned && (usesMagpie(cur) || how == "pick"):
 				// Without originals, remove a disconnected magpie model,
 				// but leave the provider alone.
 				del = append(del, "model")
@@ -388,6 +425,11 @@ func agyIn(at place) *Agent {
 				return err
 			}
 			dropShell()
+			if legacy && !providerOriginalKnown && settings.Get("modelProvider").String() == "gemini" {
+				m["agy:"+path+":provider-unknown"] = "1"
+			} else if legacy || providerOriginalKnown {
+				delete(m, "agy:"+path+":provider-unknown")
+			}
 			if !owned {
 				return nil
 			}
@@ -405,19 +447,11 @@ func agyIn(at place) *Agent {
 	owned := func() bool {
 		stashMu.Lock()
 		defer stashMu.Unlock()
-		legacy := at.cold || usesMagpie(get())
-		if !legacy {
-			for k := range agyCustom(path) {
-				legacy = legacy || strings.HasPrefix(k, magpieID+"/")
-			}
-		}
 		m, err := stashLoadKnown()
 		if err != nil {
-			// Unknown originals stop cleanup only where magpie's writes
-			// remain; an unrelated stash error doesn't own native settings.
-			return !at.cold && legacy
+			return !at.cold && usesMagpie(get())
 		}
-		_, pending, err := agyBefore(m, path, id, legacy)
+		_, pending, err := agyBefore(m, path, id, false)
 		return pending || err != nil
 	}
 	return &Agent{
@@ -449,6 +483,9 @@ func agyIn(at place) *Agent {
 		Notice: func() string {
 			v := get()
 			if !usesMagpie(v) {
+				if agyProviderUnknown(path) && provider() == "gemini" {
+					return noticeAgyProviderUnknown.say("path", at.native(path))
+				}
 				return ""
 			}
 			if in := shellIn(); len(in) > 0 {
@@ -555,6 +592,13 @@ func agyBefore(m map[string]string, path, id string, legacy bool) (map[string]js
 
 func isAgy(id string) bool { return id == "agy" || strings.HasPrefix(id, "agy@wsl:") }
 
+func agyProviderUnknown(path string) bool {
+	stashMu.Lock()
+	defer stashMu.Unlock()
+	m, err := stashLoadKnown()
+	return err == nil && m["agy:"+path+":provider-unknown"] == "1"
+}
+
 // agyConnectKnown checks the owner before Connect's generic stash writes.
 // Otherwise forget/connect.was could replace an unreadable stash before
 // the field setter gets the chance to reject an unknown original.
@@ -571,6 +615,7 @@ func agyConnectKnown(a *Agent) error {
 
 // what agy says after a change (notice.go)
 var (
-	noticeAgy      = newNotice("agy takes magpie's gateway and model only from how it is started — start it with {command}")
-	noticeAgyTyped = newNotice("Type agy in a new terminal: magpie added it to {profiles}, to start agy on magpie's gateway and model (in a terminal open now: {command}).")
+	noticeAgy                = newNotice("agy takes magpie's gateway and model only from how it is started — start it with {command}")
+	noticeAgyTyped           = newNotice("Type agy in a new terminal: magpie added it to {profiles}, to start agy on magpie's gateway and model (in a terminal open now: {command}).")
+	noticeAgyProviderUnknown = newNotice("magpie cannot tell whether modelProvider gemini in {path} was your original setting. If agy cannot start because GEMINI_API_KEY is missing, remove modelProvider from settings.json yourself.")
 )

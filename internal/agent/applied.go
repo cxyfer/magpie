@@ -843,7 +843,12 @@ func (a *Agent) Disconnect() (err error) {
 	// own the provider and custom models after Wired becomes false.
 	agy := isAgy(a.ID)
 	if !a.Wired() && (a.Owned == nil || !a.Owned()) {
-		return nil
+		// A native agy model can still leave only magpie custom models in
+		// settings.json; that is enough to run its cleanup hook. Other
+		// agents keep the existing unwired Disconnect behavior.
+		if !agy || !AgyHasMagpieArtifacts(a) {
+			return nil
+		}
 	}
 	before, rec := a.Values(), appliedOf(a.ID)
 	if agy && a.Unwire != nil {

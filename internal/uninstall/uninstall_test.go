@@ -68,6 +68,19 @@ func write(t *testing.T, p, s string) {
 	}
 }
 
+func TestConnectedIncludesAgyCleanupArtifacts(t *testing.T) {
+	oldAgents, oldWired := agents, wired
+	t.Cleanup(func() { agents, wired = oldAgents, oldWired })
+	path := filepath.Join(t.TempDir(), "settings.json")
+	write(t, path, `{"model":"native","customModelsConfig":{"customModels":{"magpie/relay/glm-4.6":{}}}}`)
+	a := &agent.Agent{ID: "agy", Path: path}
+	agents = func() []*agent.Agent { return []*agent.Agent{a} }
+	wired = func(*agent.Agent) bool { return false }
+	if got := Connected(); len(got) != 1 || got[0] != a {
+		t.Fatalf("uninstall targets %v, want cleanup-only agy %p", got, a)
+	}
+}
+
 func gone(t *testing.T, p string) bool {
 	t.Helper()
 	_, err := os.Stat(p)

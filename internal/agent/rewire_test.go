@@ -183,6 +183,27 @@ func TestPortLeavesAnUnwiredAgent(t *testing.T) {
 	}
 }
 
+func TestSetAgainKeepsStashKeysCreatedByReset(t *testing.T) {
+	syncHome(t)
+	const snapshot = "agy:/tmp/settings.json:before"
+	stash(map[string]string{"preexisting.value": "keep"})
+	a := &Agent{ID: "rewire-test", Name: "Rewire test", Fields: []Field{{
+		Key: "model",
+		Get: func() string { return magpieID },
+		Set: func(string) error {
+			stash(map[string]string{snapshot: `{"model":"native"}`})
+			return nil
+		},
+	}}}
+	if _, errs := setAgain([]*Agent{a}); len(errs) != 0 {
+		t.Fatalf("setAgain errors: %v", errs)
+	}
+	got := stashLoad()
+	if got[snapshot] != `{"model":"native"}` || got["preexisting.value"] != "keep" {
+		t.Fatalf("stash after reset: %v", got)
+	}
+}
+
 // A magpie MAGPIE_ADDR puts beside the installed one tells the installed
 // one's wiring by the port the installed one's Settings have, not 3425.
 func TestDriftInstalledMagpieOnItsPort(t *testing.T) {

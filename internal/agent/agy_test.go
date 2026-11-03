@@ -248,6 +248,156 @@ func TestAgyRestoreConnection(t *testing.T) {
 	}
 }
 
+func TestAgyCleansMagpieArtifactsWithoutSnapshot(t *testing.T) {
+	for _, c := range []struct {
+		name, action, settings string
+		artifacts              bool
+	}{
+		{name: "sync-cleans-magpie-custom-models", action: "sync", settings: `{"model":"native","modelProvider":"gemini","customModelsConfig":{"customModels":{"magpie/relay/glm-4.6":{},"mine":{"modelName":"gemini-3-pro"}}}}`, artifacts: true},
+		{name: "disconnect-cleans-magpie-custom-models", action: "disconnect", settings: `{"model":"native","modelProvider":"gemini","customModelsConfig":{"customModels":{"magpie/relay/glm-4.6":{},"mine":{"modelName":"gemini-3-pro"}}}}`, artifacts: true},
+		{name: "sync-leaves-native-settings-alone", action: "sync", settings: `{"model":"native","modelProvider":"vertex","trustedWorkspaces":["/w"]}`},
+		{name: "disconnect-leaves-native-settings-alone", action: "disconnect", settings: `{"model":"native","modelProvider":"vertex","trustedWorkspaces":["/w"]}`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			home := syncHome(t)
+			a := agy(home)
+			writeFile(t, a.Path, c.settings)
+			profile := filepath.Join(home, ".bashrc")
+			if c.artifacts {
+				if a.Owned() {
+					t.Fatal("cleanup-only artifacts were reported as a routed agent")
+				}
+				writeFile(t, profile, "# >>> magpie agy >>>\nfunction agy { :; }\n# <<< magpie agy <<<\n")
+			} else {
+				writeFile(t, profile, "alias mine=true\n")
+			}
+			before := agyRead(t, a.Path)
+			var err error
+			if c.action == "sync" {
+				err = a.Sync()
+			} else {
+				err = a.Disconnect()
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !c.artifacts {
+				if got := agyRead(t, a.Path); got != before {
+					t.Fatalf("native settings changed: %s", got)
+				}
+				return
+			}
+			if model, _ := edit.GetJSON(a.Path, "model"); model != "native" {
+				t.Fatalf("native model %q, want native", model)
+			}
+			if provider, _ := edit.GetJSON(a.Path, "modelProvider"); provider != "gemini" {
+				t.Fatalf("modelProvider %q, want unchanged gemini", provider)
+			}
+			if custom := agyCustom(a.Path); len(custom) != 1 || custom["mine"] == nil {
+				t.Fatalf("custom models after cleanup: %v", custom)
+			}
+			if strings.Contains(agyRead(t, profile), "magpie agy") {
+				t.Fatal("magpie shell function remained")
+			}
+			if got := a.Check(); got != "" {
+				t.Fatalf("cleanup warning must not appear as reconnect drift: %q", got)
+			}
+			if d := a.Drift(); d != nil {
+				t.Fatalf("cleanup warning became reconnect drift: %+v", d)
+			}
+			if got := a.Notice(); !strings.Contains(got, "magpie cannot tell whether modelProvider gemini") {
+				t.Fatalf("Notice warning %q", got)
+			}
+		})
+	}
+}
+
+func TestAgyConnectAndLegacyRestoreKeepOriginalProvider(t *testing.T) {
+	for _, c := range []struct {
+		name, provider string
+	}{
+		{name: "residual-model-gemini", provider: "gemini"},
+		{name: "residual-model-vertex", provider: "vertex"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			home := syncHome(t)
+			a := agy(home)
+			writeFile(t, a.Path, `{"model":"native","modelProvider":"`+c.provider+`","customModelsConfig":{"customModels":{"magpie/relay/glm-4.6":{},"mine":{"modelName":"gemini-3-pro"}}}}`)
+			if err := a.Apply("model", "magpie/relay/glm-4.6"); err != nil {
+				t.Fatal(err)
+			}
+			if err := a.Disconnect(); err != nil {
+				t.Fatal(err)
+			}
+			if model, _ := edit.GetJSON(a.Path, "model"); model != "native" {
+				t.Fatalf("model %q, want native", model)
+			}
+			if provider, _ := edit.GetJSON(a.Path, "modelProvider"); provider != c.provider {
+				t.Fatalf("provider %q, want %q", provider, c.provider)
+			}
+		})
+	}
+
+	t.Run("legacy-model-stash-proves-provider-absence", func(t *testing.T) {
+		home := syncHome(t)
+		a := agy(home)
+		writeFile(t, a.Path, `{"model":"magpie/relay/glm-4.6","modelProvider":"gemini","customModelsConfig":{"customModels":{"magpie/relay/glm-4.6":{}}}}`)
+		stash(map[string]string{"agy:" + a.Path + ":model": "native"})
+		if err := a.Disconnect(); err != nil {
+			t.Fatal(err)
+		}
+		if model, _ := edit.GetJSON(a.Path, "model"); model != "native" {
+			t.Fatalf("model %q, want native", model)
+		}
+		if provider, ok := edit.GetJSON(a.Path, "modelProvider"); ok {
+			t.Fatalf("provider remains %q, want original absent", provider)
+		}
+	})
+}
+
+func TestAgyOwnedOnColdWSLDoesNotReadSettingsWhenStashFails(t *testing.T) {
+	syncHome(t)
+	d, _ := agyDistro(t, "")
+	k := wslKindOf("agy")
+	live := wslAgent(k, d)
+	writeFile(t, live.Path, `{"model":"magpie/relay/glm-4.6"}`)
+	if got := live.Field("model").Get(); got != "magpie/relay/glm-4.6" {
+		t.Fatalf("live model %q, want magpie model", got)
+	}
+	if err := os.Remove(stashPath()); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(stashPath(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	d.Running = false
+	cold := wslAgent(k, d)
+	if cold.Owned() {
+		t.Fatal("cold WSL with an unreadable stash was read as owned")
+	}
+}
+
+func TestAgyWSLStashKeyUsesUNCPathAndDistroID(t *testing.T) {
+	d, _ := agyDistro(t, "")
+	d.Root = `\\wsl.localhost\Ubuntu`
+	at := d.place("agy@wsl:Ubuntu")
+	a := wslAgent(wslKindOf("agy"), d)
+	wantPath := filepath.Join(d.Root, "home", "me", ".gemini", "antigravity-cli", "settings.json")
+	if a.ID != "agy@wsl:Ubuntu" || a.Path != wantPath {
+		t.Fatalf("agy WSL identity/path = %q %q, want agy@wsl:Ubuntu %q", a.ID, a.Path, wantPath)
+	}
+	key := "agy:" + wantPath + ":before"
+	if _, owned, err := agyBefore(map[string]string{key: `{}`}, a.Path, a.ID, false); err != nil || !owned {
+		t.Fatalf("snapshot at UNC path %q: owned=%v err=%v", key, owned, err)
+	}
+	if got, want := at.key("agy.connect.was"), "agy@wsl:Ubuntu.connect.was"; got != want {
+		t.Fatalf("row stash key %q, want %q", got, want)
+	}
+	if !isAgy(a.ID) {
+		t.Fatalf("WSL agy id %q is not recognized", a.ID)
+	}
+}
+
 // Check the three entry points before their shared bookkeeping can consume
 // unknown originals. These are representative failures, not every I/O error.
 func TestAgyUnknownOriginal(t *testing.T) {
@@ -337,7 +487,7 @@ func TestAgyReviewBoundaries(t *testing.T) {
 				if err := os.MkdirAll(stashPath(), 0o755); err != nil {
 					t.Fatal(err)
 				}
-				if got, want := a.Owned(), scenario != "unknown-unowned"; got != want {
+				if got, want := a.Owned(), scenario == "unknown-model"; got != want {
 					t.Fatalf("owned %v, want %v", got, want)
 				}
 				return

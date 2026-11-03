@@ -169,8 +169,9 @@ type Agent struct {
 	// kept: the endpoint, provider and model the user had. Disconnect runs
 	// it before the fields' defaults.
 	Unwire func() error
-	// Owned identifies agy's pending restoration even after its own /model
-	// picker stopped routing through magpie. Nil for other agents.
+	// Owned identifies agy's pending snapshot or legacy-field restoration
+	// after its own /model picker stopped routing through magpie. Cleanup-only
+	// custom models do not make it owned. Nil for other agents.
 	Owned func() bool
 	// Restore, for an agent whose files magpie copied aside before its
 	// first write (beforeMagpie), puts them back as they were where what

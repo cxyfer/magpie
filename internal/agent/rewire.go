@@ -78,8 +78,16 @@ func setAgain(as []*Agent) (moved []string, errs []error) {
 		// for switching it off to put back
 		was := stashLoad()
 		e := reset(a)
+		// Keep keys created by reset (an agy's first snapshot), while the
+		// prior values remain authoritative for keys that already existed.
+		after := stashLoad()
+		for k, v := range after {
+			if _, existed := was[k]; !existed {
+				was[k] = v
+			}
+		}
 		// the address magpie wrote follows it (wiredAt)
-		for k, v := range stashLoad() {
+		for k, v := range after {
 			if strings.HasSuffix(k, wiredAt) {
 				was[k] = v
 			}

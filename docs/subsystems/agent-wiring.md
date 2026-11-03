@@ -177,12 +177,22 @@ Reapply, or reconnecting after agy's own /model picker changed only model
 keeps that first snapshot.
 
 Default, Disconnect and a Sync after a native /model pick remove magpie's
-custom models and shell function. They restore modelProvider only while it
-still reads `gemini`, the value magpie wrote: a provider the user changed
-stands. A `gemini` or empty string present before connecting is restored
-as such, and an absent key is removed. Without a snapshot or recognizable
-legacy connection record magpie leaves modelProvider alone. Disconnect
-without a snapshot still removes a magpie model and magpie custom models.
+custom models and shell function. Cleanup is separate from restoring
+modelProvider. With an exact original from the snapshot or an old per-field
+stash, magpie restores it only while the field still reads `gemini`, the
+value magpie wrote: a provider the user changed stands. A `gemini` or empty
+string present before connecting is restored as such, and an absent key is
+removed. A legacy `:model` stash entry without a `:modelProvider` entry
+proves the old provider was absent: older `stash()` dropped empty values,
+and both fields were saved together. Without either a snapshot or a legacy
+field entry, magpie leaves modelProvider untouched, even when it is
+`gemini`; after cleaning magpie artifacts it explains through Notice that it
+cannot know whether `gemini` was already there, and says to remove
+modelProvider from settings.json by hand if agy cannot start because
+GEMINI_API_KEY is missing. This Notice is not reported as reconnect drift.
+Magpie never deletes a provider by guessing.
+Disconnect and Sync without a snapshot still remove magpie custom models
+and the shell function while preserving the native model.
 A model that is already native stays, including a native default with no
 model key; Disconnect's generic field clearing and `.connect.was` fallback
 never supersede that choice. The user's own custom models and unrelated settings
@@ -195,9 +205,14 @@ so their absence cannot be distinguished retrospectively. An old applied
 record with magpie's writes still in settings also identifies a
 legacy connection whose originals were absent. A new Connect's
 `.connect.was` record alone, before any magpie write, does not own the
-existing settings. An old snapshot already overwritten with magpie's
-`gemini` cannot be distinguished from an original `gemini` the user owned;
-that saved value is restored.
+existing settings. An old v0.1.2862 snapshot already overwritten with
+magpie's `gemini` cannot be distinguished from an original `gemini` the user
+owned; that saved value is restored. That contamination is not recognizable,
+so later cleanup cannot infer a different original from it. A WSL snapshot
+key includes the opened Windows path, for example
+`agy:\\wsl.localhost\Ubuntu\home\me\.gemini\antigravity-cli\settings.json:before`;
+the row's other agy keys use the id, for example
+`agy@wsl:Ubuntu.connect.was`.
 
 A failed settings or stash read, invalid JSON, or failed write leaves the
 snapshot available for retry. Config and stash edits roll back together;
@@ -212,8 +227,10 @@ Sync reads the current model under the stash lock, through the fresh edit
 reader. A poll's cached native model cannot undo a connection written since.
 Connected Sync refreshes the catalog without reading the stash, so unknown
 originals do not block a catalog update. The model catalog is collected
-before taking the lock. `Agent.Owned`, set only by agy, tells uninstall and
-the quit question that a native /model pick still has settings to restore.
+before taking the lock. `Agent.Owned`, set only by agy, means a snapshot or
+legacy field still needs restoration after a native /model pick. Cleanup-only
+magpie custom models do not make agy appear routed to the quit question;
+uninstall separately includes those artifacts so it can remove them.
 An unowned, unwired Disconnect leaves bookkeeping alone.
 An unresolved WSL path refuses Unwire too; explicitly disconnecting a stopped
 distro starts it first, or returns its start error without consuming the
