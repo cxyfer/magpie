@@ -61,8 +61,9 @@ state error. PowerShell's function asks `magpie agy env` instead, since
 magpie.exe is a GUI program PowerShell neither waits for nor takes an exit code
 from: it sets those variables, clears the old Gemini ones, adds `--model`
 unless the caller supplied one and puts every variable back after agy ends.
-The POSIX and fish shell functions fall back to agy on PATH when the magpie
-command returns non-zero. WSL's function carries its
+The POSIX and fish functions run agy on PATH only when the magpie they name
+is gone: `agy run` execs agy, so agy's exit code is the function's, and an agy
+that failed or was interrupted is not started again off magpie. WSL's function carries its
 address, key and model and is rewritten by `Sync`; an already-open WSL terminal
 must be reopened (or its Launch command rerun) after Default or a model change.
 Local `Sync` repairs the shell block. `AgyStart` and `Sync` independently migrate

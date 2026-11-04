@@ -48,7 +48,7 @@ func TestAgyShell(t *testing.T) {
 	}
 	for _, p := range in {
 		b, _ := os.ReadFile(p)
-		if s := string(b); !strings.HasPrefix(s, mine+"\n# >>> magpie agy >>>\nfunction agy {\n") || !strings.Contains(s, " agy run \"$@\"\n    if [ $? -eq 0 ]; then return; fi") || !strings.HasSuffix(s, "}\n# <<< magpie agy <<<\n") {
+		if s := string(b); !strings.HasPrefix(s, mine+"\n# >>> magpie agy >>>\nfunction agy {\n") || !strings.Contains(s, " agy run \"$@\"; else command agy \"$@\"; fi\n}") || !strings.HasSuffix(s, "}\n# <<< magpie agy <<<\n") {
 			t.Fatalf("%s:\n%s", p, s)
 		}
 	}
@@ -112,8 +112,12 @@ func TestAgyFunction(t *testing.T) {
 			t.Errorf("%s:\n%s\nwant it to have %s", kind, got, want)
 		}
 	}
-	if got := agyFunction("fish", prog); !strings.Contains(got, "if test $status -eq 0") {
-		t.Errorf("fish function does not fall back after magpie failure:\n%s", got)
+	// `agy run` is agy itself: an agy that failed, or was interrupted, is
+	// not started again off magpie with the same arguments
+	for _, kind := range []string{"posix", "fish"} {
+		if got := agyFunction(kind, prog); strings.Contains(got, "$?") || strings.Contains(got, "$status") {
+			t.Errorf("%s function starts agy again after it ends in an error:\n%s", kind, got)
+		}
 	}
 	if got := agyFunction("powershell", prog); strings.Contains(got, "agy run") || !strings.Contains(got, "finally {") {
 		t.Errorf("PowerShell function runs magpie for agy, or doesn't put the variables back:\n%s", got)

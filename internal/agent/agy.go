@@ -146,7 +146,9 @@ func agyShell(home string, on bool) {
 }
 
 // agyFunction is the function agy in a shell of kind, which runs prog
-// (this magpie) to start it; the agy on PATH when prog is gone.
+// (this magpie) to start it; the agy on PATH only when prog is gone:
+// `agy run` is agy itself, so agy's exit code is the function's, and one
+// that failed or was interrupted isn't started again off magpie.
 // PowerShell's asks prog's `agy env` instead and starts agy itself, the
 // variables put back as they were after it: prog is a GUI program there,
 // which PowerShell neither waits for nor takes an exit code from.
@@ -154,7 +156,7 @@ func agyFunction(kind, prog string) string {
 	switch kind {
 	case "fish":
 		q := "'" + strings.NewReplacer(`\`, `\\`, "'", `\'`).Replace(prog) + "'"
-		return "function agy\n    if test -x " + q + "\n        " + q + " agy run $argv\n        if test $status -eq 0\n            return\n        end\n    end\n    command agy $argv\nend"
+		return "function agy\n    if test -x " + q + "\n        " + q + " agy run $argv\n    else\n        command agy $argv\n    end\nend"
 	case "powershell":
 		q := "'" + strings.ReplaceAll(prog, "'", "''") + "'"
 		return `function agy {
@@ -175,7 +177,7 @@ func agyFunction(kind, prog string) string {
 	}
 	q := "'" + strings.ReplaceAll(prog, "'", `'\''`) + "'"
 	// "function": a name the user aliased isn't expanded where it is defined
-	return "function agy {\n  if [ -x " + q + " ]; then\n    " + q + " agy run \"$@\"\n    if [ $? -eq 0 ]; then return; fi\n  fi\n  command agy \"$@\"\n}"
+	return "function agy {\n  if [ -x " + q + " ]; then " + q + ` agy run "$@"; else command agy "$@"; fi` + "\n}"
 }
 
 // agyDistroProfiles are the profiles of a WSL distro's shells the
