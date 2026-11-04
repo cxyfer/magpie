@@ -188,10 +188,10 @@ func TestWSLAgyFunctionRuns(t *testing.T) {
 			}
 			return strings.TrimSpace(string(out))
 		}
-		if got := run("-p 'hi there'"); got != on+" args=--model magpie/relay/glm-4.6 -p hi there" {
+		if got := run("-p 'hi there'"); got != on+` args=--settings {"modelProvider":"gemini"} --model magpie/relay/glm-4.6 -p hi there` {
 			t.Errorf("%s: %s", c.sh, got)
 		}
-		if got := run("--model=own -p hi"); got != on+" args=--model=own -p hi" {
+		if got := run("--model=own -p hi"); got != on+` args=--settings {"modelProvider":"gemini"} --model=own -p hi` {
 			t.Errorf("%s, a model given: %s", c.sh, got)
 		}
 	}

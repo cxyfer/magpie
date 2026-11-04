@@ -14,14 +14,16 @@ import (
 
 // `magpie agy run [args…]` is what the function agy magpie puts in the
 // user's shells runs (agent/agy.go): the agy on PATH, given magpie's
-// gateway, key and model while settings.json's model is one of magpie's,
-// and as it is otherwise. Every argument is agy's, --help too. `magpie agy
-// env` prints those variables and the model, one NAME=value a line and
-// nothing off magpie, for PowerShell's function.
+// gateway, key, --settings and model while settings.json's model is one of
+// magpie's, and as it is otherwise. Every argument is agy's, --help too.
+// `magpie agy env` prints those variables and the model, one NAME=value a
+// line and nothing off magpie, for PowerShell's function, and writes the
+// --settings file that function gives agy.
 
 const agyRunUsage = `magpie agy run [args…]   start agy, on magpie while its model is one of magpie's
 
-The agy on your PATH starts with GEMINI_API_KEY, GOOGLE_GEMINI_BASE_URL and
+The agy on your PATH starts with GEMINI_API_KEY, GOOGLE_GEMINI_BASE_URL,
+--settings '{"modelProvider":"gemini"}' (a --settings of yours wins) and
 --model <its model> (not when you give --model yourself); every argument is
 agy's. Off magpie's models it starts as it is. The function agy magpie puts
 in your shell's profile runs this.
@@ -49,6 +51,9 @@ func agyCmd(args []string) (ok bool, err error) {
 		env, model := agent.AgyStart()
 		if model == "" {
 			return true, nil
+		}
+		if err := agent.AgySettingsFile(); err != nil {
+			return true, err
 		}
 		for _, kv := range env {
 			fmt.Println(kv)
@@ -85,6 +90,8 @@ func agyRun(args []string) error {
 		if !slices.ContainsFunc(args, modelFlag) {
 			args = append([]string{"--model", model}, args...)
 		}
+		// agy takes the last --settings alone, so one of the user's wins
+		args = append([]string{"--settings", agent.AgySettings}, args...)
 	}
 	return agyExec(bin, args, env)
 }

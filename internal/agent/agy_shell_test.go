@@ -109,4 +109,8 @@ func TestAgyFunction(t *testing.T) {
 			t.Errorf("%s:\n%s\nwant it to have %s", kind, got, want)
 		}
 	}
+	// PowerShell's gives agy its --settings as a file, with --model or without
+	if got := agyFunction("powershell", prog); strings.Count(got, "& $real --settings '"+AgySettingsPath()+"' ") != 2 {
+		t.Errorf("powershell:\n%s", got)
+	}
 }

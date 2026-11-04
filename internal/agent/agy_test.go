@@ -56,11 +56,21 @@ func TestAgy(t *testing.T) {
 	if a.Launch() != "" {
 		t.Fatalf("launch while on the user's own model: %q", a.Launch())
 	}
+	// an agy without --settings isn't put on magpie
+	version := agyVersion
+	t.Cleanup(func() { agyVersion = version })
+	agyVersion = func() string { return "1.4.9" }
+	if err := a.Apply("model", "magpie/deepseek/pro"); err == nil || agyRead(t, path) != orig {
+		t.Fatalf("1.4.9 put on magpie: %v\n%s", err, agyRead(t, path))
+	}
+	agyVersion = func() string { return "1.4.10" }
 	if err := a.Apply("model", "magpie/deepseek/pro"); err != nil {
 		t.Fatal(err)
 	}
+	// modelProvider stays the user's: agy started on magpie is given
+	// gemini by --settings (#2924)
 	m := read()
-	if m["model"] != "magpie/deepseek/pro" || m["modelProvider"] != "gemini" {
+	if m["model"] != "magpie/deepseek/pro" || m["modelProvider"] != "vertex" {
 		t.Fatalf("not wired: %v", m)
 	}
 	cm := m["customModelsConfig"].(map[string]any)["customModels"].(map[string]any)
@@ -78,20 +88,24 @@ func TestAgy(t *testing.T) {
 		t.Fatalf("drift: %+v", d)
 	}
 	l := a.Launch()
-	if want := "GEMINI_API_KEY=" + gateway.TokenFor("agy") + " GOOGLE_GEMINI_BASE_URL=" + gateway.URL() + " agy --model 'magpie/deepseek/pro'"; runtime.GOOS != "windows" && l != want {
+	if want := "GEMINI_API_KEY=" + gateway.TokenFor("agy") + " GOOGLE_GEMINI_BASE_URL=" + gateway.URL() + ` agy --settings '{"modelProvider":"gemini"}' --model 'magpie/deepseek/pro'`; runtime.GOOS != "windows" && l != want {
 		t.Fatalf("launch: %q", l)
 	}
+	if ps := agyLaunchAt("http://gw", "k", "magpie/o'x", true); !strings.HasSuffix(ps, "; agy --settings '"+AgySettingsPath()+"' --model 'magpie/o''x'") {
+		t.Fatalf("PowerShell's launch: %q", ps)
+	}
+	// agy updated back to one without --settings: Check says so
+	agyVersion = func() string { return "1.4.9" }
+	if d := a.Drift(); d == nil || d.Kind != "unwired" {
+		t.Fatalf("drift on 1.4.9: %+v", d)
+	}
+	agyVersion = func() string { return "1.4.10" }
 	if n := a.Notice(); !strings.Contains(n, l) {
 		t.Fatalf("notice: %q", n)
 	}
 	// another of magpie's keeps the user's stashed
 	if err := a.Apply("model", "magpie/deepseek/flash"); err != nil {
 		t.Fatal(err)
-	}
-	// something else sets modelProvider back: agy asks Google directly
-	os.WriteFile(path, []byte(strings.Replace(agyRead(t, path), `"gemini"`, `"vertex"`, 1)), 0o644)
-	if d := a.Drift(); d == nil || d.Kind != "unwired" {
-		t.Fatalf("drift: %+v", d)
 	}
 	// the options: the user's own, then magpie's
 	opts := a.Field("model").Options(a.Values())

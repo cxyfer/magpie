@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yetone/magpie/internal/agent"
 	"github.com/yetone/magpie/internal/gateway"
 )
 
@@ -41,13 +42,14 @@ func TestAgyRun(t *testing.T) {
 		return out
 	}
 
-	os.WriteFile(settings, []byte(`{"model": "magpie/deepseek/pro", "modelProvider": "gemini"}`), 0o644)
+	os.WriteFile(settings, []byte(`{"model": "magpie/deepseek/pro"}`), 0o644)
+	on := []string{"--settings", `{"modelProvider":"gemini"}`}
 	for _, c := range []struct{ in, want []string }{
-		{nil, []string{"--model", "magpie/deepseek/pro"}},
-		{[]string{"--help"}, []string{"--model", "magpie/deepseek/pro", "--help"}},
-		{[]string{"-p", "hi", "--model", "mine"}, []string{"-p", "hi", "--model", "mine"}},
-		{[]string{"--model=mine"}, []string{"--model=mine"}},
-		{[]string{"-model", "mine"}, []string{"-model", "mine"}},
+		{nil, append(on, "--model", "magpie/deepseek/pro")},
+		{[]string{"--help"}, append(on, "--model", "magpie/deepseek/pro", "--help")},
+		{[]string{"-p", "hi", "--model", "mine"}, append(on, "-p", "hi", "--model", "mine")},
+		{[]string{"--model=mine"}, append(on, "--model=mine")},
+		{[]string{"-model", "mine"}, append(on, "-model", "mine")},
 	} {
 		if _, err := runOut(t, append([]string{"agy", "run"}, c.in...)...); err != nil {
 			t.Fatal(err)
@@ -62,6 +64,10 @@ func TestAgyRun(t *testing.T) {
 	out, err := runOut(t, "agy", "env")
 	if want := "GEMINI_API_KEY=" + gateway.TokenFor("agy") + "\nGOOGLE_GEMINI_BASE_URL=" + gateway.URL() + "\nmodel=magpie/deepseek/pro\n"; err != nil || out != want {
 		t.Fatalf("agy env: %q %v", out, err)
+	}
+	// the file PowerShell's function gives agy as --settings
+	if b, err := os.ReadFile(agent.AgySettingsPath()); err != nil || string(b) != agent.AgySettings {
+		t.Fatalf("agy env's settings file: %q %v", b, err)
 	}
 
 	// off magpie: as it is
