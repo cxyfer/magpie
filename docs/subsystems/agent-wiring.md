@@ -219,8 +219,11 @@ snapshot available for retry. Config and stash edits roll back together;
 shell cleanup runs only once both have been written, so a failed stash
 write that puts settings back on magpie's model keeps the function that
 gives agy its key there. It is best effort and logs failures without
-undoing a successful settings restore. `stashLoadKnown` uses a separate strict parser and cache
-kind; the shared stash reader and empty-string convention are unchanged.
+undoing a successful settings restore. `stashLoadKnown` reads through the
+one stash reader (`stashRead`), whose parse keeps what parsed together with
+why the rest didn't: it stops on a stash that doesn't parse, while
+`stashLoad` and `stashShared`, and so every other agent, go on with what
+parsed as before. The empty-string convention is unchanged.
 Empty or whitespace-only settings and stash files are known empty.
 Connect checks agy's snapshot before its generic stash writes. Disconnect
 calls agy's owner before those writes, including when Wired is false.

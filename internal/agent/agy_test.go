@@ -585,6 +585,10 @@ func TestAgyReviewBoundaries(t *testing.T) {
 				writeFile(t, stashPath(), " \n\t")
 			case "shared-stash":
 				writeFile(t, stashPath(), `{"codex.login":"api","n":1}`)
+				// one read serves both: a look first doesn't make it known
+				if stashShared()["codex.login"] != "api" {
+					t.Fatal("shared stash lost values that parsed")
+				}
 				if _, err := stashLoadKnown(); err == nil {
 					t.Fatal("strict stash accepted non-string")
 				}
