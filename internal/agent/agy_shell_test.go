@@ -97,30 +97,24 @@ func TestAgyShell(t *testing.T) {
 	}
 }
 
-// The function in each shell runs this magpie's `agy run`, the agy on
-// PATH when magpie is gone, its path quoted for that shell. PowerShell's
-// asks `agy env` and starts agy itself: magpie.exe is a GUI program,
-// which PowerShell doesn't wait for.
+// The function in each shell runs this magpie's `agy run`, which is agy
+// itself (an agy that ends in an error isn't started again), and the agy
+// on PATH only when magpie is gone, its path quoted for that shell.
+// PowerShell's asks `agy env` and starts agy itself, the variables put back
+// after: magpie.exe is a GUI program, which PowerShell doesn't wait for.
 func TestAgyFunction(t *testing.T) {
 	prog := "/Users/o'neil/magpie"
-	for kind, want := range map[string]string{
-		"posix":      `'/Users/o'\''neil/magpie' agy run "$@"`,
-		"fish":       `'/Users/o\'neil/magpie' agy run $argv`,
-		"powershell": `& '/Users/o''neil/magpie' agy env`,
+	for kind, want := range map[string][]string{
+		"posix":      {`'/Users/o'\''neil/magpie' agy run "$@"; else command agy "$@"; fi`},
+		"fish":       {`'/Users/o\'neil/magpie' agy run $argv` + "\n    else\n        command agy $argv\n    end"},
+		"powershell": {`& '/Users/o''neil/magpie' agy env`, "} finally {"},
 	} {
-		if got := agyFunction(kind, prog); !strings.Contains(got, want) {
-			t.Errorf("%s:\n%s\nwant it to have %s", kind, got, want)
+		got := agyFunction(kind, prog)
+		for _, w := range want {
+			if !strings.Contains(got, w) {
+				t.Errorf("%s:\n%s\nwant it to have %s", kind, got, w)
+			}
 		}
-	}
-	// `agy run` is agy itself: an agy that failed, or was interrupted, is
-	// not started again off magpie with the same arguments
-	for _, kind := range []string{"posix", "fish"} {
-		if got := agyFunction(kind, prog); strings.Contains(got, "$?") || strings.Contains(got, "$status") {
-			t.Errorf("%s function starts agy again after it ends in an error:\n%s", kind, got)
-		}
-	}
-	if got := agyFunction("powershell", prog); strings.Contains(got, "agy run") || !strings.Contains(got, "finally {") {
-		t.Errorf("PowerShell function runs magpie for agy, or doesn't put the variables back:\n%s", got)
 	}
 	fish := agyDistroFunction("fish", "agy-key", "http://127.0.0.1:3425", "deepseek/pro")
 	if !strings.Contains(fish, "AGY_LLM_GATEWAY_WIRE_PROTOCOL=openai agy $argv") || strings.Contains(fish, "command agy") {

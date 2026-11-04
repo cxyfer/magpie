@@ -77,7 +77,7 @@ func agyDistroMark(t *testing.T, dhome string) (string, bool) {
 // in the distro's shells' profiles — its .bashrc, and the .zshrc of the
 // zsh it logs in to, made — naming the gateway as the distro reaches it
 // under NAT, with the WSL key and the model. The model is magpie's own
-// record in agy's folder, never agy's settings. A sync after WSL moved the
+// record in its stash, never agy's settings. A sync after WSL moved the
 // address names the new one, a switch moves the model, and Default takes
 // the function out, the user's lines as they were.
 func TestWSLAgyPick(t *testing.T) {

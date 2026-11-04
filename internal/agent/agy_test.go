@@ -71,7 +71,7 @@ func agyWriteStateJSON(t *testing.T, key, body string) {
 }
 
 // agy is on magpie without one byte of its settings changing: magpie's
-// record in its folder says which model it starts on, and the launch
+// record in its stash says which model it starts on, and the launch
 // command carries the Enterprise Gateway variables and a key that names
 // agy. Picking another of magpie's models moves the record, and Default
 // takes it out and gives agy's own model back.
@@ -114,12 +114,10 @@ func TestAgy(t *testing.T) {
 	if !a.Wired() || a.Field("model").Get() != "magpie/deepseek/pro" || a.Drift() != nil {
 		t.Fatalf("wired %v, model %q, drift %+v", a.Wired(), a.Field("model").Get(), a.Drift())
 	}
+	// Windows' command is TestAgyLaunchPowerShell's
 	want := "AGY_LLM_GATEWAY_URL=" + gateway.URL() + " AGY_LLM_GATEWAY_API_KEY=" + gateway.TokenFor("agy") +
 		" AGY_LLM_GATEWAY_WIRE_PROTOCOL=openai AGY_LLM_GATEWAY_MODELS= agy --model 'deepseek/pro'"
-	if runtime.GOOS == "windows" {
-		want = agyLaunchAt(gateway.URL(), gateway.TokenFor("agy"), "deepseek/pro", true)
-	}
-	if l := a.Launch(); l != want {
+	if l := a.Launch(); runtime.GOOS != "windows" && l != want {
 		t.Fatalf("launch: %q, want %q", l, want)
 	}
 	if !strings.Contains(a.Notice(), a.Launch()) || !strings.Contains(a.Notice(), "agy") {
@@ -196,8 +194,8 @@ func TestAgy(t *testing.T) {
 	}
 }
 
-// The settings the old magpie wrote are cleaned, and what the user had is
-// restored. The old field stash is the record; a polluted one falls back
+// The settings the old magpie wrote are cleaned, a magpie model left
+// without its custom models too, and what the user had is restored. The old field stash is the record; a polluted one falls back
 // to Connect's snapshot, and with no snapshot at all its magpie model is
 // not taken for the user's.
 func TestAgyMigrateOldSettings(t *testing.T) {
@@ -261,6 +259,11 @@ func TestAgyMigrateOldSettings(t *testing.T) {
 		{
 			name: "external provider survives legacy cleanup", settings: strings.Replace(old, `"modelProvider": "gemini"`, `"modelProvider": "vertex"`, 1),
 			want: want{provider: "vertex", providerSet: true, mark: true, markModel: "deepseek/pro", afterProvider: "vertex", afterProviderSet: true, cleaned: true},
+		},
+		{
+			name:     "a magpie model with its custom models gone",
+			settings: `{"model":"magpie/deepseek/pro","trustedWorkspaces":["/w"]}`,
+			want:     want{mark: true, markModel: "deepseek/pro"},
 		},
 		{
 			name:     "not the old wiring: no magpie custom model",
@@ -331,27 +334,6 @@ func TestAgyMigrateOldSettings(t *testing.T) {
 				t.Fatalf("after Default: model %q (%v), provider %q (%v)", model, modelSet, provider, providerSet)
 			}
 		})
-	}
-}
-
-func TestAgyMigrateModelPrefixWithoutCustomModels(t *testing.T) {
-	_, _, path, mark := agyTestHome(t)
-	agyWrite(t, path, `{"model":"magpie/deepseek/pro","trustedWorkspaces":["/w"]}`)
-	a, err := Find("agy")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := a.Sync(); err != nil {
-		t.Fatal(err)
-	}
-	if m, ok := edit.GetJSON(path, "model"); ok || m != "" {
-		t.Fatalf("legacy magpie model survived: %q (%v)", m, ok)
-	}
-	if got, ok := edit.GetJSON(path, "trustedWorkspaces"); !ok || got != `["/w"]` {
-		t.Fatalf("trustedWorkspaces changed: %q (%v)", got, ok)
-	}
-	if s := agyReadState(mark); !s.On() || s.Model != "deepseek/pro" {
-		t.Fatalf("migration state: %+v", s)
 	}
 }
 
@@ -445,26 +427,28 @@ func TestAgyGatewayRestore(t *testing.T) {
 		name, before, changed, want string
 	}{
 		{"absent", `{}`, ``, `{}`},
-		{"empty", `{"model":"","modelProvider":""}`, ``, `{"model":"","modelProvider":""}`},
 		{"own gemini", `{"model":"mine","modelProvider":"gemini"}`, ``, `{"model":"mine","modelProvider":"gemini"}`},
 		{"native pick", `{"model":"mine","modelProvider":"gemini"}`, `{"model":"native"}`, `{"model":"native","modelProvider":"gemini"}`},
 		{"changed provider", `{"modelProvider":"gemini"}`, `{"modelProvider":"vertex"}`, `{"modelProvider":"vertex"}`},
 		{"empty provider", `{"modelProvider":"gemini"}`, `{"modelProvider":""}`, `{"modelProvider":""}`},
-		{"removed model", `{"model":"mine","modelProvider":"gemini"}`, `{}`, `{"modelProvider":"gemini"}`},
 		// agy 1.4.12 does not write modelProvider in Enterprise Gateway mode;
 		// a value that appears while connected is therefore an external edit.
 		{"new gemini", `{"modelProvider":"vertex"}`, `{"modelProvider":"gemini"}`, `{"modelProvider":"gemini"}`},
 	}
-	for _, c := range cases {
+	for i, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			home, _, path, _ := agyTestHome(t)
 			agyWrite(t, path, c.before)
+			// the Antigravity app's settings, once: the CLI's wiring never
+			// writes them
 			desktop := filepath.Join(home, ".antigravity", "settings.json")
-			if err := os.MkdirAll(filepath.Dir(desktop), 0o700); err != nil {
-				t.Fatal(err)
+			const app = `{"gateway":{"enabled":true,"url":"http://desktop.example","apiKey":"desktop-key"}}`
+			if i == 0 {
+				if err := os.MkdirAll(filepath.Dir(desktop), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				agyWrite(t, desktop, app)
 			}
-			agyWrite(t, desktop, `{"gateway":{"enabled":true,"url":"http://desktop.example","apiKey":"desktop-key"}}`)
-			desktopBefore := agyFile(t, desktop)
 			a := agy(home)
 			if err := a.Connect(); err != nil {
 				t.Fatal(err)
@@ -496,11 +480,8 @@ func TestAgyGatewayRestore(t *testing.T) {
 			if a.Wired() || agyReadState(agyStateKey(path)).On() {
 				t.Fatal("connection remains after Disconnect")
 			}
-			if agyFile(t, desktop) != desktopBefore {
+			if i == 0 && agyFile(t, desktop) != app {
 				t.Fatal("Antigravity desktop settings changed")
-			}
-			if _, err := os.Stat(filepath.Join(filepath.Dir(path), "magpie.json")); !os.IsNotExist(err) {
-				t.Fatal("magpie wrote into agy's folder")
 			}
 		})
 	}

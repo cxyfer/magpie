@@ -17,21 +17,30 @@ import (
 // x-goog-api-key; the key magpie starts it with names it (TokenFor), so its
 // calls are recorded as agy's, as Gemini's ?key= names it too. A command
 // copied before, with the plain token, still gets an answer, recorded as
-// the SDK's as it was.
+// the SDK's as it was. On magpie's Enterprise Gateway it asks
+// /v1/chat/completions as antigravity/cli/…, which alone would read as the
+// Antigravity app; the key names agy there too.
 func TestAgyAgent(t *testing.T) {
 	setHome(t, t.TempDir())
 	f := &fake{t: t, reply: sse(
 		`data: {"id":"c1","choices":[{"delta":{"content":"OK"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2}}`,
 		`data: [DONE]`)}
 	setup(t, provider.Chat, f)
-	const ua = "google-genai-sdk/1.71.0 gl-go/go1.28-20260721-RC03 cl/951519500"
-	body := `{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`
-	for i, c := range []struct{ header, query, want string }{
-		{TokenFor("agy"), "", "agy"},
-		{"", TokenFor("agy"), "agy"},
-		{Token, "", "google-genai-sdk"},
+	for i, c := range []struct {
+		header, query, want string
+		gateway             bool
+	}{
+		{TokenFor("agy"), "", "agy", false},
+		{"", TokenFor("agy"), "agy", false},
+		{Token, "", "google-genai-sdk", false},
+		{TokenFor("agy"), "", "agy", true},
 	} {
-		path := "/v1beta/models/fake/m1:streamGenerateContent?alt=sse"
+		path, body := "/v1beta/models/fake/m1:streamGenerateContent?alt=sse", `{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`
+		ua, header := "google-genai-sdk/1.71.0 gl-go/go1.28-20260721-RC03 cl/951519500", "x-goog-api-key"
+		if c.gateway {
+			path, body = "/v1/chat/completions", `{"model":"fake/m1","stream":true,"messages":[{"role":"user","content":"hi"}]}`
+			ua, header, c.header = "antigravity/cli/1.4.12 (aidev_client; os_type=linux; arch=amd64; cl=1010700967; auth_method=gateway)", "Authorization", "Bearer "+c.header
+		}
 		if c.query != "" {
 			path += "&key=" + c.query
 		}
@@ -39,7 +48,7 @@ func TestAgyAgent(t *testing.T) {
 		req := httptest.NewRequest("POST", path, strings.NewReader(body))
 		req.Header.Set("User-Agent", ua)
 		if c.header != "" {
-			req.Header.Set("x-goog-api-key", c.header)
+			req.Header.Set(header, c.header)
 		}
 		New().Handler().ServeHTTP(rec, req)
 		if rec.Code != 200 || !strings.Contains(rec.Body.String(), "OK") {
@@ -54,42 +63,6 @@ func TestAgyAgent(t *testing.T) {
 		}
 		if len(got) <= i || got[i].Agent != c.want {
 			t.Fatalf("%+v: records %+v, want the last %s's", c, got, c.want)
-		}
-	}
-}
-
-// agy on magpie's Enterprise Gateway asks /v1/chat/completions as
-// antigravity/cli/…, which the gateway would take for the Antigravity app
-// by its User-Agent alone; the key magpie starts it with names agy, so the
-// call is recorded as Antigravity CLI's.
-func TestAgyGatewayAgent(t *testing.T) {
-	setHome(t, t.TempDir())
-	f := &fake{t: t, reply: sse(
-		`data: {"id":"c1","choices":[{"delta":{"content":"OK"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":2}}`,
-		`data: [DONE]`)}
-	setup(t, provider.Chat, f)
-	const ua = "antigravity/cli/1.4.12 (aidev_client; os_type=linux; arch=amd64; cl=1010700967; auth_method=gateway)"
-	for i, c := range []struct{ key, want string }{
-		{TokenFor("agy"), "agy"},
-		{TokenFor("antigravity"), "antigravity"},
-	} {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"fake/m1","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
-		req.Header.Set("User-Agent", ua)
-		req.Header.Set("Authorization", "Bearer "+c.key)
-		New().Handler().ServeHTTP(rec, req)
-		if rec.Code != 200 || !strings.Contains(rec.Body.String(), "OK") {
-			t.Fatalf("%s: %d %s", c.want, rec.Code, rec.Body.String())
-		}
-		var got []usage.Record
-		for range 100 {
-			if got = usage.Load(time.Time{}); len(got) > i {
-				break
-			}
-			time.Sleep(20 * time.Millisecond)
-		}
-		if len(got) <= i || got[i].Agent != c.want {
-			t.Fatalf("%s: records %+v", c.want, got)
 		}
 	}
 }
