@@ -489,6 +489,8 @@ func agyIn(at place) *Agent {
 			shell(agyReadState(stateKey).On())
 			return nil
 		},
+		// this machine's agy; a WSL distro's row says its kind's notice
+		// (wslAgent)
 		Notice: func() string {
 			st := agyReadState(stateKey)
 			if !st.On() {
@@ -497,19 +499,11 @@ func agyIn(at place) *Agent {
 			command := launch(st.Model)
 			if in := shellIn(); len(in) > 0 {
 				for i := range in {
-					if distro {
-						in[i] = at.native(in[i])
-					} else {
-						in[i] = update.TildeHome(in[i])
-					}
+					in[i] = update.TildeHome(in[i])
 				}
 				return noticeAgyTyped.say("profiles", strings.Join(in, ", "), "command", command)
 			}
-			n := noticeAgy.say("command", command)
-			if distro {
-				n += " A WSL terminal already open needs reopening, or its Launch command rerun, after Default or a model change."
-			}
-			return n
+			return noticeAgy.say("command", command)
 		},
 		Check: func() string {
 			st := agyReadState(stateKey)
