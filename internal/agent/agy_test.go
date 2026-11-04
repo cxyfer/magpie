@@ -65,8 +65,21 @@ func TestAgy(t *testing.T) {
 		t.Fatalf("1.4.9 put on magpie: %v\n%s", err, agyRead(t, path))
 	}
 	agyVersion = func() string { return "1.4.10" }
+	// on Windows agy is given --settings by a file: one that can't be
+	// written refuses the pick, settings.json as it was
+	system := agyOS
+	t.Cleanup(func() { agyOS = system })
+	agyOS = "windows"
+	os.MkdirAll(AgySettingsPath(), 0o755)
+	if err := a.Apply("model", "magpie/deepseek/pro"); err == nil || agyRead(t, path) != orig {
+		t.Fatalf("picked with no settings file: %v\n%s", err, agyRead(t, path))
+	}
+	os.Remove(AgySettingsPath())
 	if err := a.Apply("model", "magpie/deepseek/pro"); err != nil {
 		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(AgySettingsPath()); string(b) != AgySettings {
+		t.Fatalf("settings file: %q", b)
 	}
 	// modelProvider stays the user's: agy started on magpie is given
 	// gemini by --settings (#2924)
@@ -108,6 +121,13 @@ func TestAgy(t *testing.T) {
 	if err := a.Apply("model", "magpie/deepseek/flash"); err != nil {
 		t.Fatal(err)
 	}
+	// a Sync that can't write the file says so
+	os.Remove(AgySettingsPath())
+	os.MkdirAll(AgySettingsPath(), 0o755)
+	if err := a.Sync(); err == nil {
+		t.Fatal("Sync with no settings file")
+	}
+	os.Remove(AgySettingsPath())
 	// gemini the user set while on magpie is theirs: a start keeps it
 	os.WriteFile(path, []byte(strings.Replace(agyRead(t, path), `"vertex"`, `"gemini"`, 1)), 0o644)
 	if err := a.Sync(); err != nil || read()["modelProvider"] != "gemini" {

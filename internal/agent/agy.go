@@ -76,6 +76,11 @@ var agyVersion = func() string {
 	return installedVersion(real)
 }
 
+// agyOS is the system magpie runs on, which says whether agy is given
+// AgySettings by its file (Windows' PowerShell); a var so a test on
+// another system can take that way.
+var agyOS = runtime.GOOS
+
 // agyTooOld says agy at version v takes no --settings. One whose version
 // isn't known is started with it all the same.
 func agyTooOld(v string) bool { return v != "" && Newer(agySettingsSince, v) }
@@ -137,10 +142,6 @@ func agyShell(home string, on bool) {
 		return
 	}
 	if on {
-		// PowerShell's function and command give agy AgySettings by its file
-		if runtime.GOOS == "windows" {
-			AgySettingsFile()
-		}
 		update.ShellFunction("agy", agyFunction)
 	} else {
 		update.DropShellFunction("agy")
@@ -323,6 +324,16 @@ func agyIn(at place) *Agent {
 		}
 		return agyVersion()
 	}
+	// settingsFile writes AgySettingsFile for agy on this machine where
+	// PowerShell's function and the row's command name it (agyOS): one it
+	// can't write is the pick's error and Sync's, as agy started with a
+	// path that isn't there exits at once
+	settingsFile := func() error {
+		if distro || agyOS != "windows" {
+			return nil
+		}
+		return AgySettingsFile()
+	}
 	gw, key := at.gw, func() string { return agentKeyAt("agy", at.gw()) }
 	shell := func(on bool) {
 		if !distro {
@@ -368,6 +379,9 @@ func agyIn(at place) *Agent {
 			shell(on)
 			if !on {
 				return nil
+			}
+			if err := settingsFile(); err != nil {
+				return err
 			}
 			// the modelProvider an older magpie wrote goes back to the
 			// user's, none when they had none, once: agy gets it from
@@ -431,6 +445,9 @@ func agyIn(at place) *Agent {
 				if ref, ok := strings.CutPrefix(v, magpieID+"/"); ok && isMagpie(ref) {
 					if n := ver(); agyTooOld(n) {
 						return fmt.Errorf("agy %s takes no --settings, which magpie starts it with: update agy to %s or later, then pick the model again", n, agySettingsSince)
+					}
+					if err := settingsFile(); err != nil {
+						return err
 					}
 					if !usesMagpie(cur) {
 						// modelProvider is stashed still, for an older
