@@ -97,21 +97,13 @@ func agyLaunchAt(gw, key, model string, powershell bool) string {
 
 // AgyStart is what starts agy on magpie, the variables and the model,
 // while magpie's stash has a model; nil and "" otherwise, when agy starts as
-// it is. Old settings are cleaned first: agy refuses gateway mode while
-// modelProvider is "gemini".
+// it is. The error is magpie's record that can't be read. It only reads:
+// `magpie agy run` runs beside the app, whose stash lock (stashMu) is its
+// own process's, so old settings are cleaned by the app's Sync and Connect,
+// and agy's settings.json isn't read at all.
 func AgyStart() (env []string, model string, err error) {
 	home, _ := homes()
-	return agyStartAt(home)
-}
-
-func agyStartAt(home string) (env []string, model string, err error) {
-	dir := filepath.Join(home, ".gemini", "antigravity-cli")
-	path := filepath.Join(dir, "settings.json")
-	key := agyStateKey(path)
-	if err := agyChange("agy", path, "", "sync"); err != nil {
-		return nil, "", err
-	}
-	st := agyReadState(key)
+	st := agyReadState(agyStateKey(filepath.Join(home, ".gemini", "antigravity-cli", "settings.json")))
 	if !st.Known {
 		return nil, "", fmt.Errorf("magpie's Antigravity CLI record can't be read")
 	}

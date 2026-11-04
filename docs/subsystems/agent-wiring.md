@@ -66,8 +66,11 @@ is gone: `agy run` execs agy, so agy's exit code is the function's, and an agy
 that failed or was interrupted is not started again off magpie. WSL's function carries its
 address, key and model and is rewritten by `Sync`; an already-open WSL terminal
 must be reopened (or its Launch command rerun) after Default or a model change.
-Local `Sync` repairs the shell block. `AgyStart` and `Sync` independently migrate
-legacy settings before starting or reporting a connection.
+Local `Sync` repairs the shell block. `AgyStart` only reads magpie's record,
+never agy's settings.json: `agy run` runs beside the app, and `stashMu` is the
+app's own process's lock, so legacy settings are migrated by the app's `Sync`
+and Connect. A settings.json that doesn't parse doesn't keep a connected agy
+off the gateway.
 
 `agyMigrate` removes only the old `magpie/*` Gemini custom models, and also
 recognizes a `model` whose value starts with `magpie/` when that custom-model

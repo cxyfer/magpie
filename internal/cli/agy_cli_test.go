@@ -104,23 +104,38 @@ func TestAgyRun(t *testing.T) {
 		t.Fatalf("agy env off magpie: %q %v", out, err)
 	}
 
-	// an old magpie's settings are cleaned before agy starts, and the
-	// model it was on carries over
-	os.WriteFile(settings, []byte(`{"model":"magpie/deepseek/pro","modelProvider":"gemini","customModelsConfig":{"customModels":{"magpie/deepseek/pro":{"apiProvider":"API_PROVIDER_GOOGLE_GEMINI","modelName":"deepseek/pro"},"mine":{"apiProvider":"API_PROVIDER_GOOGLE_GEMINI","modelName":"gemini-3-pro"}}}}`), 0o644)
+	// agy run only reads magpie's record: it runs beside the app, whose
+	// stash lock is the app's own, so an old magpie's settings are left for
+	// the app's Sync, and nothing is written
+	stash := filepath.Join(filepath.Dir(provider.Path()), "stash.json")
+	old := `{"model":"magpie/deepseek/pro","modelProvider":"gemini","customModelsConfig":{"customModels":{"magpie/deepseek/pro":{"apiProvider":"API_PROVIDER_GOOGLE_GEMINI","modelName":"deepseek/pro"}}}}`
+	os.WriteFile(settings, []byte(old), 0o644)
+	stashBefore, _ := os.ReadFile(stash)
 	if _, err := runOut(t, "agy", "run", "-p", "hi"); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(args, []string{"--model", "deepseek/pro", "-p", "hi"}) {
-		t.Fatalf("after migration: %v", args)
+	if b, _ := os.ReadFile(settings); string(b) != old {
+		t.Fatalf("agy run wrote agy's settings:\n%s", b)
 	}
-	b, _ := os.ReadFile(settings)
-	if strings.Contains(string(b), "modelProvider") || strings.Contains(string(b), "magpie/deepseek/pro") || !strings.Contains(string(b), `"mine"`) {
-		t.Fatalf("old settings left:\n%s", b)
+	if b, _ := os.ReadFile(stash); string(b) != string(stashBefore) {
+		t.Fatalf("agy run wrote magpie's stash:\n%s", b)
+	}
+	// and agy's settings.json isn't what says agy is on magpie: one that
+	// doesn't parse still starts a connected agy on the gateway
+	if err := a.Apply("model", "magpie/deepseek/pro"); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(settings, []byte("{"), 0o644)
+	if _, err := runOut(t, "agy", "run", "-p", "hi"); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(args, []string{"--model", "deepseek/pro", "-p", "hi"}) || !slices.Equal(envOf("AGY_LLM_GATEWAY_URL"), []string{gateway.URL()}) {
+		t.Fatalf("a settings.json that doesn't parse: %v %v", args, envOf("AGY_LLM_GATEWAY_URL"))
 	}
 
 	// An unreadable stash must not prevent the shell wrapper from starting
 	// agy as it is, with the caller's arguments and environment intact.
-	if err := os.WriteFile(filepath.Join(filepath.Dir(provider.Path()), "stash.json"), []byte("{"), 0o600); err != nil {
+	if err := os.WriteFile(stash, []byte("{"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := runOut(t, "agy", "run", "-p", "hi"); err != nil {
