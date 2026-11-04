@@ -231,8 +231,11 @@ type Agent struct {
 	EndFailover func() error
 	// Follow, for an agent whose own picker moves its main model where
 	// magpie keeps other settings following it (Claude Code's /model and
-	// its tiers), brings those along to the model picked there. Run as the
-	// Agents page is drawn.
+	// its tiers), brings those along to the model picked there. agy's
+	// /model leaves magpie's provider and models behind a model of its
+	// own: its Follow takes the connection out as Disconnect does, the
+	// model kept. Run as the Agents page is drawn, and for agy by
+	// `magpie agy run` and `magpie agy env` before agy starts as it is.
 	Follow func() error
 	// RenameRefs, for an agent whose config names magpie's models beyond
 	// its fields (omp's other roles and fallback chains), moves those names

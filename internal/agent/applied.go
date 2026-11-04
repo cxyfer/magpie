@@ -453,14 +453,18 @@ func (a *Agent) Keep() {
 
 // forgetSetUp is Disconnect's Keep: what magpie set is forgotten, and so is
 // that magpie set the agent up at all.
-func (a *Agent) forgetSetUp() {
+func (a *Agent) forgetSetUp() { forgetSetUpOf(a.ID) }
+
+// forgetSetUpOf is forgetSetUp for the agent id: agy's Follow does it
+// under the stash lock, with the rest of what Disconnect writes.
+func forgetSetUpOf(id string) {
 	appliedMu.Lock()
 	defer appliedMu.Unlock()
 	m := appliedLoad()
-	if _, ok := m[a.ID]; !ok {
+	if _, ok := m[id]; !ok {
 		return
 	}
-	delete(m, a.ID)
+	delete(m, id)
 	appliedSave(m)
 }
 

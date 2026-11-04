@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -90,6 +91,78 @@ func TestAgyRun(t *testing.T) {
 	if _, err := runOut(t, "agy", "run"); err == nil || !strings.Contains(err.Error(), "isn't installed") {
 		t.Fatalf("no agy: %v", err)
 	}
+}
+
+// agyNativePick is agy connected to magpie on vertex, then on a model
+// picked in its own /model, which leaves magpie's provider behind; its
+// settings.json.
+func agyNativePick(t *testing.T) (home, settings string) {
+	t.Helper()
+	home = helpHome(t)
+	if err := provider.Save(provider.Provider{ID: "relay", Chat: "http://127.0.0.1:1/v1", Key: "k", Models: []string{"pro"}}); err != nil {
+		t.Fatal(err)
+	}
+	settings = filepath.Join(home, ".gemini", "antigravity-cli", "settings.json")
+	os.MkdirAll(filepath.Dir(settings), 0o755)
+	os.WriteFile(settings, []byte(`{"modelProvider":"vertex"}`), 0o644)
+	if err := run([]string{"agy", "relay/pro"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := edit.SetJSON(settings, edit.KV{Path: "model", Value: "gemini-native"}); err != nil {
+		t.Fatal(err)
+	}
+	return home, settings
+}
+
+// agyTidied fails unless raw is settings.json on the native model and
+// vertex again, nothing of magpie's left.
+func agyTidied(t *testing.T, raw string) {
+	t.Helper()
+	var got map[string]any
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := json.Marshal(got); string(b) != `{"model":"gemini-native","modelProvider":"vertex"}` {
+		t.Fatalf("agy starts on %s", raw)
+	}
+}
+
+// magpie's provider, left by agy's own /model, would have agy ask for
+// GEMINI_API_KEY: `magpie agy run` takes it out before agy starts.
+func TestAgyRunAfterNativePick(t *testing.T) {
+	home, settings := agyNativePick(t)
+	var started string
+	var args []string
+	oldExec, oldLook := agyExec, agyLook
+	t.Cleanup(func() { agyExec, agyLook = oldExec, oldLook })
+	agyExec = func(_ string, a, _ []string) error {
+		b, _ := os.ReadFile(settings)
+		started, args = string(b), a
+		return nil
+	}
+	agyLook = func() (string, error) { return filepath.Join(home, "bin", "agy"), nil }
+	if _, err := runOut(t, "agy", "run", "-p", "hi"); err != nil {
+		t.Fatal(err)
+	}
+	agyTidied(t, started)
+	if !slices.Equal(args, []string{"-p", "hi"}) {
+		t.Fatalf("agy started with %v", args)
+	}
+}
+
+// PowerShell's function asks `magpie agy env`, then starts agy as it is
+// on its empty answer: env takes it out too.
+func TestAgyEnvAfterNativePick(t *testing.T) {
+	_, settings := agyNativePick(t)
+	out, err := runOut(t, "agy", "env")
+	if err != nil || out != "" {
+		t.Fatalf("agy env: %q %v", out, err)
+	}
+	b, err := os.ReadFile(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agyTidied(t, string(b))
 }
 
 func TestAgyDefaultAfterNativePick(t *testing.T) {

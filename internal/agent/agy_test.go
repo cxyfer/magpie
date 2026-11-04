@@ -248,6 +248,86 @@ func TestAgyRestoreConnection(t *testing.T) {
 	}
 }
 
+// agy's own /model changes only model. Follow, as the page looks, takes
+// out the rest of the connection as Disconnect does, the native model kept;
+// without a saved original, or still on magpie, it leaves the file alone.
+func TestAgyFollowAfterNativePick(t *testing.T) {
+	for _, c := range []struct {
+		name, original, want string
+		lost, wsl, connected bool
+	}{
+		{name: "connected", original: `{"modelProvider":"vertex"}`, connected: true},
+		{name: "absent-provider", original: `{}`, want: `{"model":"native"}`},
+		{name: "own-provider", original: `{"modelProvider":"vertex"}`, want: `{"model":"native","modelProvider":"vertex"}`},
+		{name: "no-snapshot", original: `{}`, lost: true},
+		{name: "wsl", original: `{"modelProvider":"vertex"}`, want: `{"model":"native","modelProvider":"vertex"}`, wsl: true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			home := syncHome(t)
+			a := agy(home)
+			running := true
+			if c.wsl {
+				d, dhome := agyDistro(t, "alias mine=true\n")
+				d.up = func() bool { return running }
+				a, home = wslAgent(wslKindOf("agy"), d), dhome
+			}
+			profile := filepath.Join(home, ".bashrc")
+			writeFile(t, profile, "alias mine=true\n")
+			writeFile(t, a.Path, c.original)
+			if _, err := a.ConnectHow(); err != nil {
+				t.Fatal(err)
+			}
+			if c.lost {
+				a.Keep()
+				forget("agy:"+a.Path+":before", a.ID+".connect.was")
+			}
+			if !c.connected {
+				if err := edit.SetJSON(a.Path, edit.KV{Path: "model", Value: "native"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if !strings.Contains(agyRead(t, profile), "magpie agy") {
+				t.Fatal("connect gave no shell function")
+			}
+			before := agyRead(t, a.Path)
+			if c.wsl {
+				// a distro stopped since isn't started for the page's look
+				running = false
+				if err := a.Follow(); err != nil || agyRead(t, a.Path) != before {
+					t.Fatalf("followed in a stopped distro: %v", err)
+				}
+				running = true
+			}
+			if err := a.Follow(); err != nil {
+				t.Fatal(err)
+			}
+			if c.lost || c.connected {
+				if got := agyRead(t, a.Path); got != before || a.Disconnected() || c.connected && !a.Wired() {
+					t.Fatalf("followed with nothing to take out: %s", got)
+				}
+				return
+			}
+			var got, want map[string]any
+			if err := json.Unmarshal([]byte(agyRead(t, a.Path)), &got); err != nil {
+				t.Fatal(err)
+			}
+			json.Unmarshal([]byte(c.want), &want)
+			if agyJSON(got) != agyJSON(want) {
+				t.Fatalf("followed to %s, want %s", agyJSON(got), c.want)
+			}
+			if stashShared()["agy:"+a.Path+":before"] != "" || a.Owned() {
+				t.Fatal("snapshot left after Follow")
+			}
+			if !a.Disconnected() || a.setUp() {
+				t.Fatal("Follow left magpie's record of the connection")
+			}
+			if got := agyRead(t, profile); got != "alias mine=true\n" {
+				t.Fatalf("shell function left: %q", got)
+			}
+		})
+	}
+}
+
 func TestAgyCleansMagpieArtifactsWithoutSnapshot(t *testing.T) {
 	for _, c := range []struct {
 		name, action, settings string

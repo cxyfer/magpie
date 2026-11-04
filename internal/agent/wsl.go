@@ -954,6 +954,15 @@ func wslAgent(k wslKind, d distro) *Agent {
 			return sync()
 		}
 	}
+	// the page looking doesn't start a distro stopped since
+	if follow := a.Follow; follow != nil {
+		a.Follow = func() error {
+			if !d.live() {
+				return nil
+			}
+			return follow()
+		}
+	}
 	if check := a.Check; check != nil {
 		a.Check = func() string {
 			if !d.live() {
@@ -1010,6 +1019,9 @@ func unreached(a *Agent, err error) *Agent {
 	}
 	if a.Unwire != nil {
 		a.Unwire = func() error { return err }
+	}
+	if a.Follow != nil {
+		a.Follow = func() error { return err }
 	}
 	return a
 }

@@ -32,11 +32,17 @@ package agent
 // magpie's and as it is otherwise (cli/agy_cli.go); PowerShell's asks
 // `magpie agy env` for them, since the app it would run is a GUI program
 // PowerShell doesn't wait for. A terminal open before takes the command
-// from the row.
+// from the row. agy's own /model changes only model, so a model picked
+// there leaves magpie's provider, custom models and function behind;
+// Follow takes them out as Disconnect does, as the Agents page looks and
+// in `magpie agy run` and `env` before agy starts as it is. A distro's
+// function is shell alone, with no magpie to ask, so there it waits for
+// the page or a Sync.
 
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -107,6 +113,14 @@ func AgyStart() (env []string, model string) {
 		return nil, ""
 	}
 	return []string{"GEMINI_API_KEY=" + agentKey("agy"), "GOOGLE_GEMINI_BASE_URL=" + gateway.URL()}, m
+}
+
+// AgyFollow is Follow for agy on this machine, for `magpie agy run` to
+// take out what magpie left once agy's own /model picked a model of its
+// own, before it starts agy.
+func AgyFollow() error {
+	home, _ := homes()
+	return agy(home).Follow()
 }
 
 // agyShell gives the user's shells the function agy, or takes it out of
@@ -327,7 +341,22 @@ func agyIn(at place) *Agent {
 		}
 		stashMu.Lock()
 		defer stashMu.Unlock()
-		return edit.Atomically(func() error {
+		// Follow checks under the lock, before Atomically: with nothing
+		// to take out, or an unreadable file, stash or snapshot (unknown),
+		// it writes nothing, and puts nothing back.
+		if how == "follow" {
+			raw, err := edit.Read(path)
+			m, merr := stashLoadKnown()
+			settings := gjson.ParseBytes(jsonc.ToJSON(raw))
+			if err != nil || merr != nil || !edit.ValidJSONC(raw) || !settings.IsObject() || !agyLeft(path, settings, m) {
+				return errAgyStays
+			}
+			if _, _, err := agyBefore(m, path, id, false); err != nil {
+				return errAgyStays
+			}
+		}
+		stayed := false
+		err := edit.Atomically(func() error {
 			raw, err := edit.Read(path)
 			if err != nil {
 				return err
@@ -358,6 +387,12 @@ func agyIn(at place) *Agent {
 			_, hasLegacyModel := m["agy:"+path+":model"]
 			_, hasLegacyProvider := m["agy:"+path+":modelProvider"]
 			hasOriginal := hasSnapshot || hasLegacyModel || hasLegacyProvider
+			// the file as read again: agy, or another magpie, may have
+			// written it since
+			if how == "follow" && !agyLeft(path, settings, m) {
+				stayed = true
+				return nil
+			}
 			// A magpie model or custom-model entry is sufficient ownership
 			// for cleanup, not evidence of the original provider value.
 			owned = owned || legacy
@@ -437,11 +472,25 @@ func agyIn(at place) *Agent {
 			delete(m, "agy:"+path+":model")
 			delete(m, "agy:"+path+":modelProvider")
 			delete(m, id+".connect.was")
+			if how == "follow" {
+				// what Disconnect records, in this one write under the
+				// lock: a Pick waiting on it comes after all of it
+				m[id+disconnectedKey] = "1"
+				b, _ := json.Marshal(reconnection{Magpie: map[string]string{}, Left: map[string]string{"model": cur}})
+				m[id+".reconnect"] = string(b)
+			}
 			if err := stashWrite(m); err != nil {
 				return err
 			}
+			if how == "follow" {
+				forgetSetUpOf(id)
+			}
 			return nil
 		}, path, stashPath())
+		if err == nil && stayed {
+			return errAgyStays
+		}
+		return err
 	}
 	unwire := func() error { return change("", "disconnect") }
 	owned := func() bool {
@@ -454,7 +503,7 @@ func agyIn(at place) *Agent {
 		_, pending, err := agyBefore(m, path, id, false)
 		return pending || err != nil
 	}
-	return &Agent{
+	a := &Agent{
 		ID: "agy", Name: "Antigravity CLI", Icon: "antigravity-color", Aliases: []string{"antigravity-cli"}, Spelled: prefixed, NoNames: true,
 		Bin: "agy", Dir: dir, Path: path,
 		Launch: func() string {
@@ -558,6 +607,63 @@ func agyIn(at place) *Agent {
 			},
 		}},
 	}
+	// agy's own /model changes only model: magpie's provider, custom
+	// models and shell function stay, and its next start, given no
+	// GEMINI_API_KEY, fails. Once the page looks (or `magpie agy run` or
+	// `env` starts agy as it is), that connection is taken out as
+	// Disconnect does, the model picked there kept. A poll reads what is
+	// held and takes the stash lock only once a saved original and a
+	// leftover of magpie's are both there; an unreadable stash or
+	// snapshot is unknown, and nothing is written.
+	a.Follow = func() error {
+		if at.cold || usesMagpie(get()) {
+			return nil
+		}
+		custom, _ := edit.GetJSON(path, agyModels)
+		if provider() != "gemini" && !agyMagpieModels(gjson.Parse(custom)) || !agySaved(stashShared(), path) {
+			return nil
+		}
+		err := change("", "follow")
+		if errors.Is(err, errAgyStays) {
+			return nil
+		}
+		a.rewired(err)
+		return err
+	}
+	return a
+}
+
+// errAgyStays is Follow's change finding, under the stash lock, nothing
+// agy's own /model left: on magpie again, or already tidied.
+var errAgyStays = errors.New("agy has nothing of magpie's to take out")
+
+// agyLeft says what agy's own /model left at path: its original saved,
+// a model of agy's own, and magpie's provider or custom models still in
+// settings.
+func agyLeft(path string, settings gjson.Result, m map[string]string) bool {
+	return agySaved(m, path) && !usesMagpie(settings.Get("model").String()) &&
+		(settings.Get("modelProvider").String() == "gemini" || agyMagpieModels(settings.Get(agyModels)))
+}
+
+// agySaved says the stash m has path's original: the snapshot, or an old
+// per-field entry.
+func agySaved(m map[string]string, path string) bool {
+	for _, k := range []string{"before", "model", "modelProvider"} {
+		if _, ok := m["agy:"+path+":"+k]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// agyMagpieModels says customModels has one of magpie's.
+func agyMagpieModels(custom gjson.Result) bool {
+	found := false
+	custom.ForEach(func(k, _ gjson.Result) bool {
+		found = strings.HasPrefix(k.String(), magpieID+"/")
+		return !found
+	})
+	return found
 }
 
 // agyBefore reads the explicit snapshot, or the old per-field stash. Old
