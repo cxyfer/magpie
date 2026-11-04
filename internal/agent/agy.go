@@ -275,6 +275,11 @@ func agyIn(at place) *Agent {
 	get := jsonGet(path, "model")
 	provider := jsonGet(path, "modelProvider")
 	stashModel, stashProvider := "agy:"+path+":model", "agy:"+path+":modelProvider"
+	// stashSettings marks agy connected by a magpie that gives it
+	// modelProvider by --settings alone, so settings.json's is the user's:
+	// set by the pick that connects it, and by the first Sync of one an
+	// older magpie connected, once that magpie's gemini is put back
+	stashSettings := "agy:" + path + ":settings"
 	// setModels writes customModels with the user's own and, when with,
 	// magpie's; none left takes the key out
 	setModels := func(with bool) error {
@@ -365,15 +370,17 @@ func agyIn(at place) *Agent {
 				return nil
 			}
 			// the modelProvider an older magpie wrote goes back to the
-			// user's, none when they had none: agy gets it from --settings.
-			// A stash that is missing or doesn't parse says nothing of what
-			// they had, so it stays.
-			if provider() == "gemini" {
-				if st, err := stashRead(filememo.Read[stashFile]); err == nil && st[stashProvider] != "gemini" {
-					if err := put("modelProvider", st[stashProvider]); err != nil {
+			// user's, none when they had none, once: agy gets it from
+			// --settings, and one set after is the user's. A stash that is
+			// missing or doesn't parse says nothing of what they had, so it
+			// stays.
+			if st, err := stashRead(filememo.Read[stashFile]); err == nil && st[stashSettings] == "" {
+				if was := st[stashProvider]; provider() == "gemini" && was != "gemini" {
+					if err := put("modelProvider", was); err != nil {
 						return err
 					}
 				}
+				stash(map[string]string{stashSettings: "1"})
 			}
 			return setModels(true)
 		},
@@ -426,7 +433,9 @@ func agyIn(at place) *Agent {
 						return fmt.Errorf("agy %s takes no --settings, which magpie starts it with: update agy to %s or later, then pick the model again", n, agySettingsSince)
 					}
 					if !usesMagpie(cur) {
-						stash(map[string]string{stashModel: cur, stashProvider: provider()})
+						// modelProvider is stashed still, for an older
+						// magpie's disconnect after a downgrade
+						stash(map[string]string{stashModel: cur, stashProvider: provider(), stashSettings: "1"})
 					}
 					if err := setModels(true); err != nil {
 						return err
@@ -444,7 +453,11 @@ func agyIn(at place) *Agent {
 					} else {
 						forget(stashModel)
 					}
-					if err := put("modelProvider", unstash(stashProvider)); err != nil {
+					// magpie wrote modelProvider only before stashSettings:
+					// since, it is as the user has it now
+					if stashShared()[stashSettings] != "" {
+						forget(stashProvider, stashSettings)
+					} else if err := put("modelProvider", unstash(stashProvider)); err != nil {
 						return err
 					}
 				}

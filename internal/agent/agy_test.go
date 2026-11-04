@@ -108,10 +108,16 @@ func TestAgy(t *testing.T) {
 	if err := a.Apply("model", "magpie/deepseek/flash"); err != nil {
 		t.Fatal(err)
 	}
-	// gemini as an older magpie wrote it over the user's: a start puts
-	// theirs back, but not from a stash gone or unparsed, which says
-	// nothing of theirs
+	// gemini the user set while on magpie is theirs: a start keeps it
 	os.WriteFile(path, []byte(strings.Replace(agyRead(t, path), `"vertex"`, `"gemini"`, 1)), 0o644)
+	if err := a.Sync(); err != nil || read()["modelProvider"] != "gemini" {
+		t.Fatalf("after Sync on the user's gemini: %v\n%s", err, agyRead(t, path))
+	}
+	// gemini as an older magpie wrote it over the user's, with no mark of
+	// --settings: a start puts theirs back once, but not from a stash gone
+	// or unparsed, which says nothing of theirs
+	older := "agy:" + path + ":settings"
+	forget(older)
 	kept, _ := os.ReadFile(stashPath())
 	for _, bad := range []string{"gone", `{"oops`} {
 		if bad == "gone" {
@@ -127,18 +133,23 @@ func TestAgy(t *testing.T) {
 	if err := a.Sync(); err != nil || read()["modelProvider"] != "vertex" {
 		t.Fatalf("after Sync: %v\n%s", err, agyRead(t, path))
 	}
+	os.WriteFile(path, []byte(strings.Replace(agyRead(t, path), `"vertex"`, `"gemini"`, 1)), 0o644)
+	if err := a.Sync(); err != nil || read()["modelProvider"] != "gemini" {
+		t.Fatalf("a second Sync: %v\n%s", err, agyRead(t, path))
+	}
 	// the options: the user's own, then magpie's
 	opts := a.Field("model").Options(a.Values())
 	if len(opts) == 0 || opts[0].Value != "mine" || opts[0].Group != "Antigravity CLI" {
 		t.Fatalf("options: %+v", opts)
 	}
-	// as installed: the user's model and provider back, magpie's models out
+	// as installed: the user's model back, their provider as they set it,
+	// magpie's models out
 	if err := a.Apply("model", ""); err != nil {
 		t.Fatal(err)
 	}
 	var back, was map[string]any
 	json.Unmarshal([]byte(agyRead(t, path)), &back)
-	json.Unmarshal([]byte(orig), &was)
+	json.Unmarshal([]byte(strings.Replace(orig, `"vertex"`, `"gemini"`, 1)), &was)
 	if agyJSON(back) != agyJSON(was) {
 		t.Fatalf("not restored:\n%s", agyRead(t, path))
 	}
@@ -151,6 +162,7 @@ func TestAgy(t *testing.T) {
 	os.WriteFile(path, []byte("{\n  \"trustedWorkspaces\": []\n}\n"), 0o644)
 	a.Apply("model", "magpie/deepseek/pro")
 	edit.SetJSON(path, edit.KV{Path: "modelProvider", Value: "gemini"})
+	forget(older)
 	if err := a.Sync(); err != nil || read()["modelProvider"] != nil {
 		t.Fatalf("after Sync: %v\n%s", err, agyRead(t, path))
 	}
