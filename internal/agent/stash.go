@@ -1,8 +1,10 @@
 package agent
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log"
 	"maps"
@@ -33,7 +35,8 @@ func stashPath() string { return filepath.Join(filepath.Dir(provider.Path()), "s
 // stashLoad is the stash as a map of the caller's own, to change and write
 // back.
 func stashLoad() map[string]string {
-	m := maps.Clone(stashRead(filememo.ReadNow[map[string]string]))
+	m, _ := stashRead(filememo.ReadNow[stashFile])
+	m = maps.Clone(m)
 	if m == nil {
 		m = map[string]string{}
 	}
@@ -45,16 +48,41 @@ func stashLoad() map[string]string {
 // times, and a fresh read and parse for each was 35 MB of what twenty
 // polls allocated.
 func stashShared() map[string]string {
-	return stashRead(filememo.Read[map[string]string])
+	m, _ := stashRead(filememo.Read[stashFile])
+	return m
 }
 
-func stashRead(read func(kind, path string, parse func([]byte) (map[string]string, error)) (map[string]string, error)) map[string]string {
-	m, _ := read("stash", stashPath(), func(b []byte) (map[string]string, error) {
-		out := map[string]string{}
-		json.Unmarshal(b, &out)
-		return out, nil
-	})
-	return m
+// stashFile is stash.json as read: m is what parsed, all of it or the part
+// before what didn't, and err is why it didn't. It is kept with the file's
+// bytes either way, so a stash that doesn't parse isn't read again on each
+// look.
+type stashFile struct {
+	m   map[string]string
+	err error
+}
+
+// stashRead is the one read of stash.json: the stash and, for a file
+// missing, unreadable or not the stash's object, why. stashLoad and
+// stashShared take what parsed and go on; a caller that must not take a
+// failed read for no stash (agy's Sync) stops.
+func stashRead(read func(kind, path string, parse func([]byte) (stashFile, error)) (stashFile, error)) (map[string]string, error) {
+	f, err := read("stash", stashPath(), parseStash)
+	if err != nil {
+		return nil, err
+	}
+	return f.m, f.err
+}
+
+func parseStash(b []byte) (stashFile, error) {
+	if len(bytes.TrimSpace(b)) == 0 {
+		return stashFile{m: map[string]string{}}, nil
+	}
+	m := map[string]string{}
+	err := json.Unmarshal(b, &m)
+	if err == nil && m == nil {
+		err = fmt.Errorf("stash is not a JSON object")
+	}
+	return stashFile{m: m, err: err}, nil
 }
 
 // stashWrite writes m as the stash, a file there that doesn't parse kept

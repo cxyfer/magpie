@@ -109,8 +109,21 @@ func TestAgy(t *testing.T) {
 		t.Fatal(err)
 	}
 	// gemini as an older magpie wrote it over the user's: a start puts
-	// theirs back
+	// theirs back, but not from a stash gone or unparsed, which says
+	// nothing of theirs
 	os.WriteFile(path, []byte(strings.Replace(agyRead(t, path), `"vertex"`, `"gemini"`, 1)), 0o644)
+	kept, _ := os.ReadFile(stashPath())
+	for _, bad := range []string{"gone", `{"oops`} {
+		if bad == "gone" {
+			os.Remove(stashPath())
+		} else {
+			os.WriteFile(stashPath(), []byte(bad), 0o600)
+		}
+		if err := a.Sync(); err != nil || read()["modelProvider"] != "gemini" {
+			t.Fatalf("after Sync on a stash %s: %v\n%s", bad, err, agyRead(t, path))
+		}
+	}
+	os.WriteFile(stashPath(), kept, 0o600)
 	if err := a.Sync(); err != nil || read()["modelProvider"] != "vertex" {
 		t.Fatalf("after Sync: %v\n%s", err, agyRead(t, path))
 	}

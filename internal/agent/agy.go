@@ -46,6 +46,7 @@ import (
 	"github.com/tidwall/jsonc"
 
 	"github.com/yetone/magpie/internal/edit"
+	"github.com/yetone/magpie/internal/filememo"
 	"github.com/yetone/magpie/internal/gateway"
 	"github.com/yetone/magpie/internal/update"
 )
@@ -364,10 +365,12 @@ func agyIn(at place) *Agent {
 				return nil
 			}
 			// the modelProvider an older magpie wrote goes back to the
-			// user's, none when they had none: agy gets it from --settings
+			// user's, none when they had none: agy gets it from --settings.
+			// A stash that is missing or doesn't parse says nothing of what
+			// they had, so it stays.
 			if provider() == "gemini" {
-				if was := stashShared()[stashProvider]; was != "gemini" {
-					if err := put("modelProvider", was); err != nil {
+				if st, err := stashRead(filememo.Read[stashFile]); err == nil && st[stashProvider] != "gemini" {
+					if err := put("modelProvider", st[stashProvider]); err != nil {
 						return err
 					}
 				}
