@@ -328,6 +328,54 @@ func TestAgyFollowAfterNativePick(t *testing.T) {
 	}
 }
 
+// A stash that can't be written puts settings.json back as it was, on
+// magpie's model for Disconnect: the shell function, which gives agy its
+// key there, stays with it.
+func TestAgyShellStaysWhenTheStashIsntWritten(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("directory permissions don't hold on windows or as root")
+	}
+	for _, how := range []string{"disconnect", "follow"} {
+		t.Run(how, func(t *testing.T) {
+			home := syncHome(t)
+			a := agy(home)
+			profile := filepath.Join(home, ".bashrc")
+			writeFile(t, profile, "alias mine=true\n")
+			writeFile(t, a.Path, `{"modelProvider":"vertex"}`)
+			if _, err := a.ConnectHow(); err != nil {
+				t.Fatal(err)
+			}
+			if how == "follow" {
+				if err := edit.SetJSON(a.Path, edit.KV{Path: "model", Value: "native"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before := agyRead(t, a.Path)
+			dir := filepath.Dir(stashPath())
+			if err := os.Chmod(dir, 0o500); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { os.Chmod(dir, 0o755) })
+			var err error
+			if how == "follow" {
+				err = a.Follow()
+			} else {
+				err = a.Disconnect()
+			}
+			os.Chmod(dir, 0o755)
+			if err == nil {
+				t.Fatal("no error with the stash unwritable")
+			}
+			if got := agyRead(t, a.Path); got != before {
+				t.Fatalf("settings not put back: %s", got)
+			}
+			if !strings.Contains(agyRead(t, profile), "magpie agy") {
+				t.Fatal("shell function taken out though settings were put back")
+			}
+		})
+	}
+}
+
 func TestAgyCleansMagpieArtifactsWithoutSnapshot(t *testing.T) {
 	for _, c := range []struct {
 		name, action, settings string

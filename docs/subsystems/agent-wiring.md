@@ -216,8 +216,10 @@ the row's other agy keys use the id, for example
 
 A failed settings or stash read, invalid JSON, or failed write leaves the
 snapshot available for retry. Config and stash edits roll back together;
-shell cleanup is best effort and logs failures without undoing a successful
-settings restore. `stashLoadKnown` uses a separate strict parser and cache
+shell cleanup runs only once both have been written, so a failed stash
+write that puts settings back on magpie's model keeps the function that
+gives agy its key there. It is best effort and logs failures without
+undoing a successful settings restore. `stashLoadKnown` uses a separate strict parser and cache
 kind; the shared stash reader and empty-string convention are unchanged.
 Empty or whitespace-only settings and stash files are known empty.
 Connect checks agy's snapshot before its generic stash writes. Disconnect

@@ -355,7 +355,9 @@ func agyIn(at place) *Agent {
 				return errAgyStays
 			}
 		}
-		stayed := false
+		// the shell function goes once every write has: one that fails puts
+		// settings back on magpie, which still needs the function's key
+		stayed, drop := false, false
 		err := edit.Atomically(func() error {
 			raw, err := edit.Read(path)
 			if err != nil {
@@ -419,7 +421,7 @@ func agyIn(at place) *Agent {
 				return edit.SetJSON(path, edit.KV{Path: "modelProvider", Value: "gemini"}, edit.KV{Path: "model", Value: v})
 			}
 			if how != "pick" && !owned && !usesMagpie(cur) && !hasMagpieModels {
-				dropShell()
+				drop = true
 				return nil
 			}
 			providerOriginalKnown := hasSnapshot || hasLegacyProvider || hasLegacyModel
@@ -459,7 +461,7 @@ func agyIn(at place) *Agent {
 			if err := edit.WriteAtomic(path, out); err != nil {
 				return err
 			}
-			dropShell()
+			drop = true
 			if legacy && !providerOriginalKnown && settings.Get("modelProvider").String() == "gemini" {
 				m["agy:"+path+":provider-unknown"] = "1"
 			} else if legacy || providerOriginalKnown {
@@ -487,6 +489,9 @@ func agyIn(at place) *Agent {
 			}
 			return nil
 		}, path, stashPath())
+		if err == nil && drop {
+			dropShell()
+		}
 		if err == nil && stayed {
 			return errAgyStays
 		}
