@@ -74,7 +74,8 @@ off the gateway.
 
 `agyMigrate` removes only the old `magpie/*` Gemini custom models, and also
 recognizes a `model` whose value starts with `magpie/` when that custom-model
-list has already been deleted. It restores
+list has already been deleted. Check and `Owned` ask the same rule (`agyOld`),
+whatever `modelProvider` is now. It restores
 `model` only while it has the old `magpie/` prefix, and `modelProvider` only while
 it is `gemini`, using the legacy stash or its absence. A polluted original model
 can fall back to `<id>.connect.was`; the disconnect fix's `agy:<path>:before`

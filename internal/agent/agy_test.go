@@ -365,7 +365,7 @@ func TestAgyOldWiringRecognizesModelPrefix(t *testing.T) {
 	if err := os.WriteFile(stashPath(), []byte("{"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if c := a.Check(); !strings.Contains(c, "old modelProvider") {
+	if c := a.Check(); !strings.Contains(c, "old magpie's") {
 		t.Fatalf("old model prefix was not reported: %q", c)
 	}
 }
@@ -382,13 +382,25 @@ func TestAgyCheck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c := a.Check(); !strings.Contains(c, "old modelProvider") {
+	if c := a.Check(); !strings.Contains(c, "old magpie's") {
 		t.Fatalf("old wiring: %q", c)
 	}
 	if err := a.Sync(); err != nil {
 		t.Fatal(err)
 	}
 	if c := a.Check(); c != "" {
+		t.Fatalf("after Sync: %q\n%s", c, agyFile(t, path))
+	}
+	// the old magpie's custom models are the old wiring under a
+	// modelProvider the user moved to since too, as Sync cleans them
+	agyWrite(t, path, `{"modelProvider":"vertex","customModelsConfig":{"customModels":{"magpie/deepseek/pro":{"apiProvider":"API_PROVIDER_GOOGLE_GEMINI","modelName":"deepseek/pro"}}}}`)
+	if c := a.Check(); !strings.Contains(c, "old magpie's") {
+		t.Fatalf("old custom models under vertex: %q", c)
+	}
+	if err := a.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	if c := a.Check(); c != "" || strings.Contains(agyFile(t, path), "magpie/") {
 		t.Fatalf("after Sync: %q\n%s", c, agyFile(t, path))
 	}
 	// a modelProvider gemini set again while connected is drift, and Sync

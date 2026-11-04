@@ -500,8 +500,8 @@ func agyIn(at place) *Agent {
 		Check: func() string {
 			st := agyReadState(stateKey)
 			if !st.Known {
-				if _, old := agyOldWiring(path); old {
-					return "Antigravity CLI's settings.json still has magpie's old modelProvider and custom models, so it asks Google directly; magpie couldn't clean them"
+				if agyOldWiring(path) {
+					return "Antigravity CLI's settings.json still has the old magpie's model or custom models, which magpie couldn't clean"
 				}
 				return "magpie's Antigravity CLI stash record can't be read; it is stored as " + stateKey + "; Pick agy's model again to rebuild it"
 			}
@@ -514,8 +514,8 @@ func agyIn(at place) *Agent {
 			if !isMagpie(st.Model) {
 				return "Antigravity CLI's model " + st.Model + " is no longer in magpie's catalog, so it no longer reaches magpie"
 			}
-			if _, old := agyOldWiring(path); old {
-				return "Antigravity CLI's settings.json still has magpie's old modelProvider and custom models, so it asks Google directly; magpie couldn't clean them"
+			if agyOldWiring(path) {
+				return "Antigravity CLI's settings.json still has the old magpie's model or custom models, which magpie couldn't clean"
 			}
 			if p, _ := edit.GetJSON(path, "modelProvider"); p == "gemini" {
 				return "Antigravity CLI's settings.json has modelProvider gemini, so it asks Google's Gemini API instead of magpie's gateway; Sync takes it out"
@@ -555,11 +555,7 @@ func agyOwned(path string, look bool) bool {
 	if st := agyReadState(agyStateKey(path)); !st.Known || st.On() {
 		return true
 	}
-	if !look {
-		return false
-	}
-	_, old := agyOldWiring(path)
-	return old
+	return look && agyOldWiring(path)
 }
 
 // agyDistroCheck says what in the distro's function agy no longer matches
@@ -595,49 +591,38 @@ func agyDistroCheck(at place, gw, key, ref string) string {
 	return ""
 }
 
-// agyOldWiring reports the settings the old magpie wrote: modelProvider
-// "gemini" and at least one custom model under magpie/, with Google's
-// provider as the old magpie wrote it. ref is the model it was on, when
-// that is one of magpie's.
-func agyOldWiring(path string) (ref string, ok bool) {
-	raw, err := edit.Read(path)
-	if err != nil || len(raw) == 0 {
-		return "", false
-	}
-	clean := jsonc.ToJSONInPlace(append([]byte(nil), raw...))
-	if !json.Valid(clean) || !gjson.ParseBytes(clean).IsObject() {
-		return "", false
-	}
-	return agyOldWiringClean(clean)
+// agyOldModel says k, v, one of agy's custom models, is one the old magpie
+// wrote: under magpie/, through Google's Gemini API.
+func agyOldModel(k, v gjson.Result) bool {
+	return strings.HasPrefix(k.String(), magpieID+"/") && v.Get("apiProvider").String() == "API_PROVIDER_GOOGLE_GEMINI"
 }
 
-func agyOldWiringClean(clean []byte) (ref string, ok bool) {
-	if m := gjson.GetBytes(clean, "model").String(); strings.HasPrefix(m, magpieID+"/") {
-		if ref := strings.TrimPrefix(m, magpieID+"/"); ref != "" {
-			return ref, true
-		}
+// agyOld says agy's settings have what the old magpie wrote, which
+// agyMigrate cleans: a model of magpie's, or one of its custom models.
+func agyOld(settings gjson.Result) bool {
+	if ref, ok := strings.CutPrefix(settings.Get("model").String(), magpieID+"/"); ok && ref != "" {
+		return true
 	}
-	if gjson.GetBytes(clean, "modelProvider").String() != "gemini" {
-		return "", false
-	}
-	first := ""
-	gjson.GetBytes(clean, agyModels).ForEach(func(k, v gjson.Result) bool {
-		if !strings.HasPrefix(k.String(), magpieID+"/") {
-			return true
-		}
-		if !strings.Contains(v.Get("apiProvider").String(), "GOOGLE_GEMINI") {
-			return true
-		}
-		first = v.Get("modelName").String()
-		if first == "" {
-			first = strings.TrimPrefix(k.String(), magpieID+"/")
-		}
-		return false
+	old := false
+	settings.Get(agyModels).ForEach(func(k, v gjson.Result) bool {
+		old = agyOldModel(k, v)
+		return !old
 	})
-	if first == "" {
-		return "", false
+	return old
+}
+
+// agyOldWiring says agy's settings at path have the old wiring (agyOld);
+// a file that can't be read, or isn't a JSON object, doesn't.
+func agyOldWiring(path string) bool {
+	raw, err := edit.Read(path)
+	if err != nil || len(raw) == 0 {
+		return false
 	}
-	return first, true
+	clean := jsonc.ToJSON(raw)
+	if !json.Valid(clean) || !gjson.ParseBytes(clean).IsObject() {
+		return false
+	}
+	return agyOld(gjson.ParseBytes(clean))
 }
 
 // agyMigrate removes the old Gemini custom-model route. Each original is
@@ -647,22 +632,16 @@ func agyOldWiringClean(clean []byte) (ref string, ok bool) {
 // the user's own "gemini"; preserve it, rather than inventing an original.
 func agyMigrate(id, path string, raw []byte, m map[string]string, s agyState) ([]byte, agyState, error) {
 	settings := gjson.ParseBytes(jsonc.ToJSON(raw))
-	old := false
-	keep := map[string]json.RawMessage{}
-	if m := settings.Get("model").String(); strings.HasPrefix(m, magpieID+"/") && strings.TrimPrefix(m, magpieID+"/") != "" {
-		old = true
+	if !agyOld(settings) {
+		return raw, s, nil
 	}
+	keep := map[string]json.RawMessage{}
 	settings.Get(agyModels).ForEach(func(k, v gjson.Result) bool {
-		if strings.HasPrefix(k.String(), magpieID+"/") && v.Get("apiProvider").String() == "API_PROVIDER_GOOGLE_GEMINI" {
-			old = true
-		} else {
+		if !agyOldModel(k, v) {
 			keep[k.String()] = json.RawMessage(v.Raw)
 		}
 		return true
 	})
-	if !old {
-		return raw, s, nil
-	}
 	before := map[string]json.RawMessage{}
 	prefix := "agy:" + path + ":"
 	// Also accept the snapshot used by the disconnect-restoration fix.
