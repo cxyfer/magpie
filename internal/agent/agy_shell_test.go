@@ -98,13 +98,15 @@ func TestAgyShell(t *testing.T) {
 }
 
 // The function in each shell runs this magpie's `agy run`, the agy on
-// PATH when magpie is gone, its path quoted for that shell.
+// PATH when magpie is gone, its path quoted for that shell. PowerShell's
+// asks `agy env` and starts agy itself: magpie.exe is a GUI program,
+// which PowerShell doesn't wait for.
 func TestAgyFunction(t *testing.T) {
 	prog := "/Users/o'neil/magpie"
 	for kind, want := range map[string]string{
 		"posix":      `'/Users/o'\''neil/magpie' agy run "$@"`,
 		"fish":       `'/Users/o\'neil/magpie' agy run $argv`,
-		"powershell": `& '/Users/o''neil/magpie' agy run @args`,
+		"powershell": `& '/Users/o''neil/magpie' agy env`,
 	} {
 		if got := agyFunction(kind, prog); !strings.Contains(got, want) {
 			t.Errorf("%s:\n%s\nwant it to have %s", kind, got, want)
@@ -113,8 +115,8 @@ func TestAgyFunction(t *testing.T) {
 	if got := agyFunction("fish", prog); !strings.Contains(got, "if test $status -eq 0") {
 		t.Errorf("fish function does not fall back after magpie failure:\n%s", got)
 	}
-	if got := agyFunction("powershell", prog); !strings.Contains(got, "$LASTEXITCODE -eq 0") {
-		t.Errorf("PowerShell function does not fall back after magpie failure:\n%s", got)
+	if got := agyFunction("powershell", prog); strings.Contains(got, "agy run") || !strings.Contains(got, "finally {") {
+		t.Errorf("PowerShell function runs magpie for agy, or doesn't put the variables back:\n%s", got)
 	}
 	fish := agyDistroFunction("fish", "agy-key", "http://127.0.0.1:3425", "deepseek/pro")
 	if !strings.Contains(fish, "AGY_LLM_GATEWAY_WIRE_PROTOCOL=openai agy $argv") || strings.Contains(fish, "command agy") {

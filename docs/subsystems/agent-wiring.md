@@ -57,8 +57,12 @@ agy after Default. Model switches update the stash, never agy's `model`.
 `magpie agy run` reads that state, supplies the four variables and adds `--model`
 unless the caller supplied one. If the stash is unreadable it reports a short
 warning on stderr and starts agy unchanged; `magpie agy env` still reports the
-state error. The POSIX, fish and PowerShell shell functions fall back to agy on
-PATH when the magpie command returns non-zero. WSL's function carries its
+state error. PowerShell's function asks `magpie agy env` instead, since
+magpie.exe is a GUI program PowerShell neither waits for nor takes an exit code
+from: it sets those variables, clears the old Gemini ones, adds `--model`
+unless the caller supplied one and puts every variable back after agy ends.
+The POSIX and fish shell functions fall back to agy on PATH when the magpie
+command returns non-zero. WSL's function carries its
 address, key and model and is rewritten by `Sync`; an already-open WSL terminal
 must be reopened (or its Launch command rerun) after Default or a model change.
 Local `Sync` repairs the shell block. `AgyStart` and `Sync` independently migrate

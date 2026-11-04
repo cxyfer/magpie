@@ -2658,7 +2658,9 @@ PowerShell profiles on Windows). In a new terminal, plain `agy` then runs
 `AGY_LLM_GATEWAY_URL` (the gateway root), `AGY_LLM_GATEWAY_API_KEY`,
 `AGY_LLM_GATEWAY_WIRE_PROTOCOL=openai`, an empty `AGY_LLM_GATEWAY_MODELS`,
 and `--model` (yours wins when you give one), so agy's `/model` list is
-magpie's models alone (`provider/model`). Off magpie it starts agy
+magpie's models alone (`provider/model`). PowerShell's function asks
+`magpie agy env` for them and starts agy itself, since PowerShell doesn't
+wait for magpie.exe; the variables are put back after. Off magpie it starts agy
 untouched. A terminal open already takes the command the Launch
 row copies. Stepping out (`magpie agy default`) takes the record and the
 block out again. `magpie agy env` prints what `agy run` adds.

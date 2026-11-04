@@ -147,6 +147,9 @@ func agyShell(home string, on bool) {
 
 // agyFunction is the function agy in a shell of kind, which runs prog
 // (this magpie) to start it; the agy on PATH when prog is gone.
+// PowerShell's asks prog's `agy env` instead and starts agy itself, the
+// variables put back as they were after it: prog is a GUI program there,
+// which PowerShell neither waits for nor takes an exit code from.
 func agyFunction(kind, prog string) string {
 	switch kind {
 	case "fish":
@@ -157,11 +160,17 @@ func agyFunction(kind, prog string) string {
 		return `function agy {
     $real = Get-Command agy -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $real) { Write-Error 'agy is not installed'; return }
+    $start = @{}
     if (Test-Path -LiteralPath ` + q + `) {
-        & ` + q + ` agy run @args
-        if ($LASTEXITCODE -eq 0) { return }
+        foreach ($l in @(& ` + q + ` agy env)) { $k, $v = "$l" -split '=', 2; if ($k) { $start[$k] = $v } }
     }
-    & $real @args
+    if (-not $start.model) { & $real @args; return }
+    $names = 'AGY_LLM_GATEWAY_URL', 'AGY_LLM_GATEWAY_API_KEY', 'AGY_LLM_GATEWAY_WIRE_PROTOCOL', 'AGY_LLM_GATEWAY_MODELS', 'GEMINI_API_KEY', 'GOOGLE_GEMINI_BASE_URL'
+    $was = @{}
+    foreach ($n in $names) { $was[$n] = [Environment]::GetEnvironmentVariable($n); [Environment]::SetEnvironmentVariable($n, $start[$n]) }
+    try {
+        if (@($args | Where-Object { "$_" -match '^--?model(=|$)' }).Count) { & $real @args } else { & $real --model $start.model @args }
+    } finally { foreach ($n in $names) { [Environment]::SetEnvironmentVariable($n, $was[$n]) } }
 }`
 	}
 	q := "'" + strings.ReplaceAll(prog, "'", `'\''`) + "'"
