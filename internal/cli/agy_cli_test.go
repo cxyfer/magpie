@@ -11,6 +11,7 @@ import (
 	"github.com/yetone/magpie/internal/agent"
 	"github.com/yetone/magpie/internal/gateway"
 	"github.com/yetone/magpie/internal/provider"
+	"github.com/yetone/magpie/internal/testenv"
 )
 
 // `magpie agy run`, what the function agy in the user's shells runs
@@ -39,6 +40,13 @@ func TestAgyRun(t *testing.T) {
 	}
 	real := filepath.Join(home, "bin", "agy")
 	agyLook = func() (string, error) { return real, nil }
+	// a pick asks agy its version: the agy on PATH is a stand-in that says
+	// none, never the machine's own
+	os.MkdirAll(filepath.Dir(real), 0o755)
+	if err := testenv.StandIns(filepath.Dir(real), []string{"agy"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", filepath.Dir(real)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	envOf := func(k string) []string {
 		var out []string
 		for _, kv := range env {

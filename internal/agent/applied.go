@@ -660,9 +660,13 @@ func (a *Agent) connect() (Connection, error) {
 		if a.unreached != nil {
 			return Connection{}, a.unreached
 		}
+		// An agy before the gateway is refused before anything is written.
 		// Migrate before connect.was can replace the legacy original, and
 		// reject an unreadable stash before generic bookkeeping writes it.
-		if err := agyChange(a.ID, a.Path, "", "sync"); err != nil {
+		if err := agyOldErr(agyVersionOf(a)); err != nil {
+			return Connection{}, err
+		}
+		if err := agyChange(a.ID, a.Path, "", "sync", false); err != nil {
 			return Connection{}, err
 		}
 		if a.Wired() {

@@ -15,6 +15,18 @@ import (
 	"github.com/yetone/magpie/internal/provider"
 )
 
+// agy here is one that takes the gateway unless a test says otherwise:
+// the agy on PATH is never asked
+func init() { agyVersion = func() string { return agyGatewaySince } }
+
+// agyVersionIs holds this machine's agy at version v ("" not known).
+func agyVersionIs(t *testing.T, v string) {
+	t.Helper()
+	was := agyVersion
+	agyVersion = func() string { return v }
+	t.Cleanup(func() { agyVersion = was })
+}
+
 func agyTestHome(t *testing.T) (home, dir, settings, mark string) {
 	t.Helper()
 	home = t.TempDir()
@@ -332,6 +344,66 @@ func TestAgyMigrateOldSettings(t *testing.T) {
 			if model != c.want.afterModel || modelSet != c.want.afterModelSet ||
 				provider != c.want.afterProvider || providerSet != c.want.afterProviderSet {
 				t.Fatalf("after Default: model %q (%v), provider %q (%v)", model, modelSet, provider, providerSet)
+			}
+		})
+	}
+}
+
+// agy takes magpie's gateway from 1.4.12, the oldest tried. An older one,
+// here or in a distro, is refused Connect and a pick with the update to
+// make, its old wiring, which it runs on, left as it is by them and by a
+// sync; once on magpie, Check says it. One whose version can't be read
+// is connected as before, its notice saying so.
+func TestAgyVersion(t *testing.T) {
+	const old = `{"model":"magpie/deepseek/pro","modelProvider":"gemini","customModelsConfig":{"customModels":{"magpie/deepseek/pro":{"apiProvider":"API_PROVIDER_GOOGLE_GEMINI","modelName":"deepseek/pro"}}}}`
+	refusal := "agy 1.4.11 can't start on magpie's gateway, which needs agy 1.4.12 or later — update agy first."
+	for _, v := range []string{"1.4.11", ""} {
+		t.Run("version "+v, func(t *testing.T) {
+			_, _, path, mark := agyTestHome(t)
+			agyVersionIs(t, v)
+			agyWrite(t, path, old)
+			a, err := Find("agy")
+			if err != nil {
+				t.Fatal(err)
+			}
+			d, _ := agyDistro(t, "")
+			d.Mirrored, d.Versions = true, map[string]string{"agy": v}
+			wa := wslAgent(wslKindOf("agy"), d)
+			if err := a.Sync(); err != nil {
+				t.Fatal(err)
+			}
+			errs := []error{a.Connect(), a.Pick("model", "magpie/deepseek/flash"), wa.Field("model").Set("magpie/deepseek/pro")}
+			if v == "" {
+				for _, err := range errs {
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				if !a.Wired() || agyOldWiring(path) || !strings.HasPrefix(a.Notice(), "magpie couldn't read agy's version; ") ||
+					!strings.HasPrefix(wa.Notice(), "magpie couldn't read agy's version; ") {
+					t.Fatalf("wired %v, notices %q %q:\n%s", a.Wired(), a.Notice(), wa.Notice(), agyFile(t, path))
+				}
+				return
+			}
+			for _, err := range errs {
+				if err == nil || err.Error() != refusal {
+					t.Fatalf("not refused: %v", err)
+				}
+			}
+			if got := agyFile(t, path); got != old {
+				t.Fatalf("the old wiring was changed:\n%s", got)
+			}
+			if _, _, _, ok := agyMarkOf(t, mark); ok || stashShared()["agy.connect.was"] != "" {
+				t.Fatal("a record was made")
+			}
+			// on magpie from a newer agy, then the older one put back
+			agyVersionIs(t, "1.5.0")
+			if err := a.Pick("model", "magpie/deepseek/pro"); err != nil {
+				t.Fatal(err)
+			}
+			agyVersionIs(t, v)
+			if got := a.Check(); got != refusal {
+				t.Fatalf("check: %q", got)
 			}
 		})
 	}

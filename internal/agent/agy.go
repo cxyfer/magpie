@@ -60,6 +60,46 @@ import (
 
 const agyModels = "customModelsConfig.customModels"
 
+// agyGatewaySince is the oldest agy known to take magpie's gateway from
+// AGY_LLM_GATEWAY_*: 1.4.12, tried by hand (and 1.5.0). No release note
+// names the version the Enterprise Gateway came in, so an older agy isn't
+// taken to have it.
+const agyGatewaySince = "1.4.12"
+
+// agyVersion is the version of the agy on PATH, "" when there is none or
+// it didn't say; asked again only once the binary changes
+// (installedVersion). A var so tests can fake it.
+var agyVersion = func() string {
+	bin := (&Agent{ID: "agy", Bin: "agy"}).BinPath()
+	if bin == "" {
+		return ""
+	}
+	real, _ := throughShim(bin)
+	return installedVersion(real)
+}
+
+// agyTooOld says agy at version v is older than agyGatewaySince. One whose
+// version isn't known isn't: it is started on the gateway as before.
+func agyTooOld(v string) bool { return v != "" && Newer(agyGatewaySince, v) }
+
+// agyOldErr is why agy at version v can't be put on the gateway; nil when
+// it can, or its version isn't known.
+func agyOldErr(v string) error {
+	if !agyTooOld(v) {
+		return nil
+	}
+	return errors.New(noticeAgyOld.say("version", v, "need", agyGatewaySince))
+}
+
+// agyVersionOf is the version of a, an agy: a distro's as its last probe
+// found it, this machine's as agy says it.
+func agyVersionOf(a *Agent) string {
+	if a.WSL != "" {
+		return a.wslVersion
+	}
+	return agyVersion()
+}
+
 // AgyEnvKey says whether k is one of the variables that start agy on
 // magpie's gateway, or the old Gemini API ones: `magpie agy run` replaces
 // them for the child so an inherited value can't point it elsewhere. An
@@ -283,8 +323,9 @@ func agyStashKnown() bool {
 // agyChange serializes the fresh settings read with every stash mutation.
 // Settings and stash are rolled back together on failure; no snapshot is
 // consumed before restoration succeeds. Catalog work happens before the lock:
-// "set" to "" steps out whatever the catalog says of the model.
-func agyChange(id, path, ref, how string) error {
+// "set" to "" steps out whatever the catalog says of the model. keepOld
+// leaves the old wiring as it is: an agy too old for the gateway runs on it.
+func agyChange(id, path, ref, how string, keepOld bool) error {
 	stashMu.Lock()
 	defer stashMu.Unlock()
 	return edit.Atomically(func() error {
@@ -310,9 +351,11 @@ func agyChange(id, path, ref, how string) error {
 		if !json.Valid(clean) || !gjson.ParseBytes(clean).IsObject() {
 			return fmt.Errorf("%s: invalid settings JSON object", path)
 		}
-		raw, s, err = agyMigrate(id, path, raw, m, s)
-		if err != nil {
-			return err
+		if !keepOld {
+			raw, s, err = agyMigrate(id, path, raw, m, s)
+			if err != nil {
+				return err
+			}
 		}
 		settings := gjson.ParseBytes(jsonc.ToJSON(raw))
 		switch {
@@ -414,6 +457,14 @@ func agyIn(at place) *Agent {
 	}
 	// the function agy, in this machine's shells or the distro's
 	distro := at.sys != nil
+	// agy's version: this machine's as agy says it, a distro's as its last
+	// probe found it, which never starts a stopped one
+	version := func() string {
+		if distro {
+			return at.version
+		}
+		return agyVersion()
+	}
 	gw, key := at.gw, func() string { return agentKeyAt("agy", at.gw()) }
 	shell := func(on bool) {
 		if !distro {
@@ -455,7 +506,14 @@ func agyIn(at place) *Agent {
 			}
 			return fmt.Errorf("Antigravity CLI's own models are picked in agy's /model after disconnecting; pick one of magpie's models, or Default to step out")
 		}
-		if err := agyChange(id, path, ref, "set"); err != nil {
+		// an agy before the gateway would ignore it: refused, its old
+		// wiring left as it is (Default still steps out)
+		if ref != "" {
+			if err := agyOldErr(version()); err != nil {
+				return err
+			}
+		}
+		if err := agyChange(id, path, ref, "set", false); err != nil {
 			return err
 		}
 		shell(agyReadState(stateKey).On())
@@ -483,7 +541,10 @@ func agyIn(at place) *Agent {
 			if !agyStashKnown() && !agyOldWiring(path) {
 				return nil
 			}
-			if err := agyChange(id, path, "", "sync"); err != nil {
+			// an agy before the gateway keeps the old wiring it runs on;
+			// with none, agy isn't asked its version
+			keepOld := agyOldWiring(path) && agyTooOld(version())
+			if err := agyChange(id, path, "", "sync", keepOld); err != nil {
 				return err
 			}
 			shell(agyReadState(stateKey).On())
@@ -496,14 +557,20 @@ func agyIn(at place) *Agent {
 			if !st.On() {
 				return ""
 			}
+			// an agy whose version can't be read is started as one that
+			// takes the gateway, and the notice says it isn't known
+			unknown := ""
+			if version() == "" {
+				unknown = noticeAgyUnknown.say("need", agyGatewaySince) + " "
+			}
 			command := launch(st.Model)
 			if in := shellIn(); len(in) > 0 {
 				for i := range in {
 					in[i] = update.TildeHome(in[i])
 				}
-				return noticeAgyTyped.say("profiles", strings.Join(in, ", "), "command", command)
+				return unknown + noticeAgyTyped.say("profiles", strings.Join(in, ", "), "command", command)
 			}
-			return noticeAgy.say("command", command)
+			return unknown + noticeAgy.say("command", command)
 		},
 		Check: func() string {
 			st := agyReadState(stateKey)
@@ -515,6 +582,9 @@ func agyIn(at place) *Agent {
 			}
 			if !st.On() {
 				return ""
+			}
+			if err := agyOldErr(version()); err != nil {
+				return err.Error()
 			}
 			if _, err := edit.Read(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 				return "Antigravity CLI's settings.json can't be read, so magpie can't tell what agy runs on"
@@ -718,8 +788,21 @@ func agyMigrate(id, path string, raw []byte, m map[string]string, s agyState) ([
 
 func isAgy(id string) bool { return id == "agy" || strings.HasPrefix(id, "agy@wsl:") }
 
-// what agy says after a change (notice.go)
+// agyWSLNotice is a distro's agy's advice after a change, said first that
+// its version isn't known when the distro's probe couldn't read it.
+func agyWSLNotice(at place) notice {
+	if at.version != "" {
+		return noticeWSLAgy
+	}
+	return notice(noticeAgyUnknown.say("need", agyGatewaySince)+" ") + noticeWSLAgy
+}
+
+// what agy says after a change (notice.go); the version sentence goes
+// first, as noticeAgy's {command} runs to the end
 var (
-	noticeAgy      = newNotice("agy takes magpie's gateway and model only from how it is started — start it with {command}")
-	noticeAgyTyped = newNotice("Type agy in a new terminal: magpie added it to {profiles}, to start agy on magpie's gateway and model (in a terminal open now: {command}).")
+	noticeAgy        = newNotice("agy takes magpie's gateway and model only from how it is started — start it with {command}")
+	noticeAgyTyped   = newNotice("Type agy in a new terminal: magpie added it to {profiles}, to start agy on magpie's gateway and model (in a terminal open now: {command}).")
+	noticeWSLAgy     = newNotice("{agent} in WSL {distro} takes magpie's gateway and model only from how it is started — type agy in a new terminal there: magpie put it in the shell's profile.")
+	noticeAgyOld     = newNotice("agy {version} can't start on magpie's gateway, which needs agy {need} or later — update agy first.")
+	noticeAgyUnknown = newNotice("magpie couldn't read agy's version; magpie's gateway needs agy {need} or later.")
 )

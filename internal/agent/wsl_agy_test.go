@@ -16,11 +16,12 @@ import (
 
 // mimi001234 on Discord: magpie's Agents page didn't find Antigravity CLI
 // installed in WSL. The probe asks after its folder and its command, and
-// finds it by either; a distro with neither has no agy row.
+// finds it by either, and asks its version (agyGatewaySince); a distro
+// with neither has no agy row.
 func TestWSLAgyFound(t *testing.T) {
 	k := wslKindOf("agy")
 	if !strings.Contains(wslProbeScript, `[ -d "$HOME/.gemini/antigravity-cli" ] && echo dir:.gemini/antigravity-cli; `) ||
-		!strings.Contains(wslProbeScript, `command -v agy `) {
+		!strings.Contains(wslProbeScript, `command -v agy `) || !strings.Contains(wslProbeScript, `echo "ver:agy `) {
 		t.Fatal("the probe doesn't ask after agy")
 	}
 	for _, p := range []string{"dir:.gemini/antigravity-cli\n", "bin:agy /home/me/.local/bin/agy\n"} {

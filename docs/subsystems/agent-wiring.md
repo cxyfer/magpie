@@ -45,6 +45,16 @@ The bearer key (`magpie-agy` on loopback) attributes requests to `agy`: its own
 User-Agent, `antigravity/cli/…`, otherwise names the desktop app to the gateway.
 The streaming tool-call and tool-result exchange uses the same Chat route.
 
+1.4.12 is the oldest agy tried on the gateway (`agyGatewaySince`; 1.5.0 too),
+and no release note names the version it came in. This machine's agy is asked
+`--version` through `installedVersion`, once per binary; a WSL distro's by its
+probe while it runs (`version: true`), a stopped one's as last probed. An older
+agy is refused Connect and a pick with a translated notice to update it
+(`agyOldErr`, `noticeAgyOld`), Sync and Connect leave its old wiring as it is,
+and Check says it when a record is already there; Default still steps out. An
+agy whose version can't be read is started on the gateway as before, and its
+notice says so first (`noticeAgyUnknown`).
+
 The state belongs to Magpie: `agy.state:<absolute settings path>` in `stash.json`
 records the selected gateway model and the originals with absent and explicit
 empty values distinguished. It is the source for the model field, `Wired`,

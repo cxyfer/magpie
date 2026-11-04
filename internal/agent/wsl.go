@@ -726,9 +726,10 @@ var wslKinds = []wslKind{
 	// (mimi001234 on Discord: magpie didn't find agy in WSL); it takes the
 	// gateway only from how it is started, so the distro's shells get the
 	// function agy (agyDistroFunction). Its own models are not in magpie's
-	// picker: they are picked in agy's /model off magpie.
-	{id: "agy", name: "Antigravity CLI", dir: ".gemini/antigravity-cli", bin: "agy", in: agyIn,
-		restart: newNotice("{agent} in WSL {distro} takes magpie's gateway and model only from how it is started — type agy in a new terminal there: magpie put it in the shell's profile.")},
+	// picker: they are picked in agy's /model off magpie. Its version says
+	// whether it takes the gateway (agyGatewaySince).
+	{id: "agy", name: "Antigravity CLI", dir: ".gemini/antigravity-cli", bin: "agy", in: agyIn, version: true,
+		restart: noticeWSLAgy, restartAt: agyWSLNotice},
 	// Block's goose, by its folder alone: a goose command may be pressly's
 	// database migration tool
 	{id: "goose", name: "Goose", dir: ".config/goose", in: func(at place) *Agent { return gooseIn(at, at.join(".config")) },
