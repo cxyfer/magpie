@@ -2,7 +2,6 @@ package agent
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -368,20 +367,6 @@ func TestAgyOldWiringRecognizesModelPrefix(t *testing.T) {
 	}
 	if c := a.Check(); !strings.Contains(c, "old modelProvider") {
 		t.Fatalf("old model prefix was not reported: %q", c)
-	}
-}
-
-func TestAgyConnectUnreachedDoesNotTouchSettings(t *testing.T) {
-	home, _, path, _ := agyTestHome(t)
-	agyWrite(t, path, `{"model":"mine","modelProvider":"vertex"}`)
-	a := agy(home)
-	reached := errors.New("unresolved WSL agy path")
-	a.unreached = reached
-	if err := a.Connect(); !errors.Is(err, reached) {
-		t.Fatalf("Connect error %v, want %v", err, reached)
-	}
-	if got := agyFile(t, path); got != `{"model":"mine","modelProvider":"vertex"}` {
-		t.Fatalf("unreached Connect changed settings: %s", got)
 	}
 }
 

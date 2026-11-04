@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yetone/magpie/internal/edit"
 	"github.com/yetone/magpie/internal/gateway"
 )
 
@@ -329,4 +331,104 @@ func TestWSLAgyStoppedOwnedByRecord(t *testing.T) {
 	if !a.Owned() || !wslAgent(wslKindOf("agy"), d).Owned() || len(*asked) != 0 {
 		t.Fatalf("magpie's record isn't read: %v, asked %v", a.Owned(), *asked)
 	}
+}
+
+// A stopped distro's agy on magpie is taken off it by Disconnect, as a
+// quit's and uninstall's ask: the distro is started first, then the
+// modelProvider magpie took out comes back, and magpie's record and the
+// function go, the user's own lines as they were.
+func TestWSLAgyStoppedDisconnect(t *testing.T) {
+	syncHome(t)
+	root := t.TempDir()
+	dhome := filepath.Join(root, "home", "me")
+	mine := "alias ll='ls -l'\n"
+	bashrc := filepath.Join(dhome, ".bashrc")
+	writeFile(t, bashrc, mine)
+	settings := filepath.Join(dhome, ".gemini", "antigravity-cli", "settings.json")
+	writeFile(t, settings, `{"model":"mine","modelProvider":"gemini"}`)
+	b, _ := json.Marshal(map[string]*distro{
+		"Stopped": {Name: "Stopped", Home: "/home/me", Root: root, Has: map[string]bool{"bin:agy": true}, Probe: wslProbeVersion},
+	})
+	os.MkdirAll(filepath.Dir(wslStatePath()), 0o755)
+	os.WriteFile(wslStatePath(), b, 0o600)
+	asked, _ := fakeWSL(t, "Stopped\r\n", "", nil, nil)
+	row := func() *Agent {
+		for _, x := range wslAgentsOf(wslDistros()) {
+			if x.ID == "agy@wsl:Stopped" {
+				return x
+			}
+		}
+		t.Fatal("no agy row")
+		return nil
+	}
+	if err := row().Field("model").Set("magpie/relay/glm-4.6"); err != nil {
+		t.Fatal(err)
+	}
+	if p, set := edit.GetJSON(settings, "modelProvider"); set || !strings.Contains(readFile(bashrc), "function agy {") {
+		t.Fatalf("not on magpie: modelProvider %q\n%s", p, readFile(bashrc))
+	}
+	*asked = nil
+	a := row()
+	if a.Owned == nil || !a.Owned() {
+		t.Fatal("a stopped distro's agy on magpie isn't owned")
+	}
+	if err := a.Disconnect(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(*asked, ",") != "Stopped" {
+		t.Fatalf("not started first: %v", *asked)
+	}
+	if p, _ := edit.GetJSON(settings, "modelProvider"); p != "gemini" {
+		t.Fatalf("modelProvider after Disconnect: %q", p)
+	}
+	if _, ok := stashShared()[agyStateKey(settings)]; ok {
+		t.Fatal("magpie's record left after Disconnect")
+	}
+	if got := readFile(bashrc); got != mine {
+		t.Fatalf(".bashrc after Disconnect:\n%s", got)
+	}
+}
+
+// A distro whose ~/.gemini is a link it couldn't resolve has an agy row
+// that writes nothing there: connecting, picking, syncing and, on magpie,
+// Disconnect each say why, agy's settings and magpie's stash as they were.
+func TestWSLAgyUnreached(t *testing.T) {
+	syncHome(t)
+	d, dhome := agyDistro(t, "")
+	d.Links = map[string]string{".gemini": ""}
+	settings := filepath.Join(dhome, ".gemini", "antigravity-cli", "settings.json")
+	writeFile(t, settings, `{"model":"mine"}`)
+	a := wslAgent(wslKindOf("agy"), d)
+	why := a.Unreached()
+	if why == nil {
+		t.Fatal("reached")
+	}
+	still := func(t *testing.T, stash string) {
+		t.Helper()
+		if got := readFile(settings); got != `{"model":"mine"}` {
+			t.Fatalf("settings written:\n%s", got)
+		}
+		if got := readFile(stashPath()); got != stash {
+			t.Fatalf("stash written:\n%s", got)
+		}
+	}
+	stash(map[string]string{"x": "1"})
+	before := readFile(stashPath())
+	for name, run := range map[string]func() error{
+		"connect": a.Connect,
+		"pick":    func() error { return a.Field("model").Set("magpie/relay/glm-4.6") },
+		"sync":    a.Sync,
+	} {
+		if err := run(); !errors.Is(err, why) {
+			t.Errorf("%s: %v, want %v", name, err, why)
+		}
+		still(t, before)
+	}
+	// on magpie, as magpie's record says: Disconnect says why too
+	stash(map[string]string{agyStateKey(settings): `{"model":"relay/glm-4.6","before":{"modelProvider":"gemini"},"providerRemoved":true}`})
+	before = readFile(stashPath())
+	if err := a.Disconnect(); !errors.Is(err, why) {
+		t.Fatalf("disconnect: %v, want %v", err, why)
+	}
+	still(t, before)
 }
