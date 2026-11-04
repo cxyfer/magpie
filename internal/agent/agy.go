@@ -226,8 +226,6 @@ const agyDistroModel = `s|^.*"model"[[:space:]]*:[[:space:]]*"\(` + magpieID + `
 // while settings.json's model is magpie's, the agy on PATH started with
 // the gateway at gw, its key, AgySettings and --model (none when one is
 // given), as `magpie agy run` does on this machine; as it is otherwise.
-// The distro's agy version isn't known, so it isn't held to
-// agySettingsSince.
 func agyDistroFunction(kind, key, gw string) string {
 	q := func(v string) string { return "'" + strings.ReplaceAll(v, "'", `'\''`) + "'" }
 	settings := `"$HOME/.gemini/antigravity-cli/settings.json"`
@@ -310,6 +308,15 @@ func agyIn(at place) *Agent {
 	}
 	// the function agy, in this machine's shells or the distro's
 	distro := at.sys != nil
+	// ver is the version of the agy there, which agySettingsSince holds it
+	// to: this machine's asked of its binary, a distro's as its probe found
+	// it (wslKind.version); "" when not known
+	ver := func() string {
+		if distro {
+			return at.version
+		}
+		return agyVersion()
+	}
 	gw, key := at.gw, func() string { return agentKeyAt("agy", at.gw()) }
 	shell := func(on bool) {
 		if !distro {
@@ -392,10 +399,8 @@ func agyIn(at place) *Agent {
 			if _, ok := agyCustom(path)[v]; !ok {
 				return "Antigravity CLI's custom model " + v + " (settings.json) is gone, so it no longer reaches magpie"
 			}
-			if !distro {
-				if ver := agyVersion(); agyTooOld(ver) {
-					return "Antigravity CLI " + ver + " takes no --settings, which magpie starts it with (agy " + agySettingsSince + " or later), so it doesn't start on magpie"
-				}
+			if n := ver(); agyTooOld(n) {
+				return "Antigravity CLI " + n + " takes no --settings, which magpie starts it with (agy " + agySettingsSince + " or later), so it doesn't start on magpie"
 			}
 			// a distro's function names the gateway's address: one WSL
 			// changed on a restart (NAT) no longer reaches it
@@ -414,10 +419,8 @@ func agyIn(at place) *Agent {
 			Set: func(v string) error {
 				cur := get()
 				if ref, ok := strings.CutPrefix(v, magpieID+"/"); ok && isMagpie(ref) {
-					if !distro {
-						if ver := agyVersion(); agyTooOld(ver) {
-							return fmt.Errorf("agy %s takes no --settings, which magpie starts it with: update agy to %s or later, then pick the model again", ver, agySettingsSince)
-						}
+					if n := ver(); agyTooOld(n) {
+						return fmt.Errorf("agy %s takes no --settings, which magpie starts it with: update agy to %s or later, then pick the model again", n, agySettingsSince)
 					}
 					if !usesMagpie(cur) {
 						stash(map[string]string{stashModel: cur, stashProvider: provider()})
