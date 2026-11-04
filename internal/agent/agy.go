@@ -713,10 +713,15 @@ func agyMigrate(id, path string, raw []byte, m map[string]string, s agyState) ([
 	if !agyOld(settings) {
 		return raw, s, nil
 	}
-	keep := map[string]json.RawMessage{}
+	// the old magpie's custom models, each taken out by its own key, so
+	// the user's beside them keep their comments and order
+	var old []string
+	kept := false
 	settings.Get(agyModels).ForEach(func(k, v gjson.Result) bool {
-		if !agyOldModel(k, v) {
-			keep[k.String()] = json.RawMessage(v.Raw)
+		if agyOldModel(k, v) {
+			old = append(old, agyModels+"."+gjsonEscape(k.String()))
+		} else {
+			kept = true
 		}
 		return true
 	})
@@ -765,8 +770,8 @@ func agyMigrate(id, path string, raw []byte, m map[string]string, s agyState) ([
 	if settings.Get("modelProvider").String() == "gemini" {
 		restore("modelProvider")
 	}
-	if len(keep) > 0 {
-		sets = append(sets, edit.KV{Path: agyModels, Value: keep})
+	if kept {
+		dels = append(dels, old...)
 	} else {
 		other := false
 		settings.Get("customModelsConfig").ForEach(func(k, _ gjson.Result) bool { other = other || k.String() != "customModels"; return true })

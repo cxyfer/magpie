@@ -235,6 +235,7 @@ func TestAgyMigrateOldSettings(t *testing.T) {
 	}
 	for _, c := range []struct {
 		name, settings, origModel, origProvider, connectWas string
+		keep                                                string // left as it was
 		want                                                want
 	}{
 		{
@@ -271,6 +272,13 @@ func TestAgyMigrateOldSettings(t *testing.T) {
 		{
 			name: "external provider survives legacy cleanup", settings: strings.Replace(old, `"modelProvider": "gemini"`, `"modelProvider": "vertex"`, 1),
 			want: want{provider: "vertex", providerSet: true, mark: true, markModel: "deepseek/pro", afterProvider: "vertex", afterProviderSet: true, cleaned: true},
+		},
+		{
+			name: "the user's comments among their custom models",
+			settings: strings.NewReplacer(`      "mine"`, `      // mine, by hand
+      "mine"`, `"magpie/deepseek/pro": {`, `"magpie/deepseek/v3.2": {`).Replace(old),
+			keep: "// mine, by hand\n      \"mine\"",
+			want: want{mark: true, markModel: "deepseek/pro", cleaned: true},
 		},
 		{
 			name:     "a magpie model with its custom models gone",
@@ -310,10 +318,10 @@ func TestAgyMigrateOldSettings(t *testing.T) {
 				t.Fatalf("settings: model %q (%v), provider %q (%v); want %q (%v), %q (%v)\n%s",
 					model, modelSet, provider, providerSet, c.want.model, c.want.modelSet, c.want.provider, c.want.providerSet, agyFile(t, path))
 			}
-			if c.want.cleaned && (!strings.Contains(agyFile(t, path), `"mine"`) || strings.Contains(agyFile(t, path), "magpie/deepseek/pro")) {
+			if c.want.cleaned && (!strings.Contains(agyFile(t, path), `"mine"`) || strings.Contains(agyFile(t, path), "magpie/deepseek/")) {
 				t.Fatalf("custom models:\n%s", agyFile(t, path))
 			}
-			if !strings.Contains(agyFile(t, path), `"/w"`) {
+			if !strings.Contains(agyFile(t, path), `"/w"`) || !strings.Contains(agyFile(t, path), c.keep) {
 				t.Fatalf("another key was lost:\n%s", agyFile(t, path))
 			}
 			mm, rm, rp, ok := agyMarkOf(t, mark)

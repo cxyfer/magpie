@@ -82,7 +82,8 @@ app's own process's lock, so legacy settings are migrated by the app's `Sync`
 and Connect. A settings.json that doesn't parse doesn't keep a connected agy
 off the gateway.
 
-`agyMigrate` removes only the old `magpie/*` Gemini custom models, and also
+`agyMigrate` removes only the old `magpie/*` Gemini custom models, each by
+its own key so the user's models keep their comments and order, and also
 recognizes a `model` whose value starts with `magpie/` when that custom-model
 list has already been deleted. Check and `Owned` ask the same rule (`agyOld`),
 whatever `modelProvider` is now. It restores
