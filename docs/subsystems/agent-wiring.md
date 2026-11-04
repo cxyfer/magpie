@@ -96,7 +96,9 @@ change it. Disconnect forgets the gateway state and drops the shell block; later
 syncs leave the restored provider alone. It asks `Owned`, not `Wired`: agy is
 on magpie while the record says so, its model in the catalog or not, while the
 old wiring is in settings.json, and while the record can't be read (Disconnect
-then says why it can't take it out). A quit's question (`wiredAgents` in
+then says why it can't take it out). A stopped WSL distro's agy is told by the
+record alone (`agyOwned`): opening its settings.json starts the distro, and a
+row made while the distro ran asks `distro.live` first. A quit's question (`wiredAgents` in
 [`quitask.go`](../../internal/gui/quitask.go)) and uninstall (`Connected`) list
 it by `Owned` too. agy's `Unwire` is the whole step-out, the model field's
 Default (migration, the provider put back, the record and the shell block

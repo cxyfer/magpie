@@ -289,3 +289,44 @@ func TestWSLAgyStopped(t *testing.T) {
 		t.Fatalf(".bashrc:\n%s", body)
 	}
 }
+
+// Whether a stopped distro's agy is on magpie is magpie's record alone:
+// its settings.json, with the old wiring in it here, is never opened, as
+// opening it through \\wsl.localhost starts the distro (#3896). A row
+// made while the distro ran asks again, and reads it so once it stopped.
+func TestWSLAgyStoppedOwnedByRecord(t *testing.T) {
+	syncHome(t)
+	root := t.TempDir()
+	dhome := filepath.Join(root, "home", "me")
+	settings := filepath.Join(dhome, ".gemini", "antigravity-cli", "settings.json")
+	writeFile(t, settings, `{"model":"magpie/relay/glm-4.6","modelProvider":"gemini","customModelsConfig":{"customModels":{"magpie/relay/glm-4.6":{"apiProvider":"API_PROVIDER_GOOGLE_GEMINI","modelName":"relay/glm-4.6"}}}}`)
+	b, _ := json.Marshal(map[string]*distro{
+		"Stopped": {Name: "Stopped", Home: "/home/me", Root: root, Has: map[string]bool{"bin:agy": true}, Probe: wslProbeVersion},
+	})
+	os.MkdirAll(filepath.Dir(wslStatePath()), 0o755)
+	os.WriteFile(wslStatePath(), b, 0o600)
+	asked, _ := fakeWSL(t, "Stopped\r\n", "", nil, nil)
+	var a *Agent
+	for _, x := range wslAgentsOf(wslDistros()) {
+		if x.ID == "agy@wsl:Stopped" {
+			a = x
+		}
+	}
+	if a == nil {
+		t.Fatal("no agy row")
+	}
+	if a.Owned() || len(*asked) != 0 {
+		t.Fatalf("owned %v, asked %v: the stopped distro's settings were read", a.Owned(), *asked)
+	}
+	// a row made while it ran, the distro stopped since
+	d := distro{Name: "Stopped", Home: "/home/me", Root: root, Has: map[string]bool{"bin:agy": true}, Running: true,
+		up: func() bool { return false }}
+	if w := wslAgent(wslKindOf("agy"), d); w.Owned() {
+		t.Fatal("the row of a distro stopped since read its settings")
+	}
+	// magpie's record says so: owned, still without a look
+	stash(map[string]string{agyStateKey(settings): `{"model":"relay/glm-4.6","before":{}}`})
+	if !a.Owned() || !wslAgent(wslKindOf("agy"), d).Owned() || len(*asked) != 0 {
+		t.Fatalf("magpie's record isn't read: %v, asked %v", a.Owned(), *asked)
+	}
+}

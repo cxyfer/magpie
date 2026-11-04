@@ -955,6 +955,12 @@ func wslAgent(k wslKind, d distro) *Agent {
 			*p = func() bool { return d.live() && f() }
 		}
 	}
+	// agy's record is magpie's stash, read whether the distro runs or not;
+	// its settings only while it does
+	if isAgy(a.ID) && a.Owned != nil {
+		path := a.Path
+		a.Owned = func() bool { return agyOwned(path, d.live()) }
+	}
 	// a stopped distro's app can't be read: unknown, not "not added"
 	if f := a.Added; f != nil {
 		a.Added = func() (bool, bool) {

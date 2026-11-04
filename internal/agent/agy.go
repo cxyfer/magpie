@@ -537,22 +537,29 @@ func agyIn(at place) *Agent {
 				return withVia(nil, "agy", magpieID+"/")
 			},
 		}},
-		// on magpie while magpie's record says so, whatever the catalog says
-		// of its model now, or while the old wiring is in its settings; and
-		// while the record can't be read, so Disconnect says why it can't
-		// take it out rather than finding nothing to
-		Owned: func() bool {
-			if st := agyReadState(stateKey); !st.Known || st.On() {
-				return true
-			}
-			_, old := agyOldWiring(path)
-			return old
-		},
+		Owned: func() bool { return agyOwned(path, !at.cold) },
 		// Disconnect's whole step-out, its fields left alone: the old
 		// wiring cleaned, the modelProvider magpie took out put back,
 		// magpie's record and the function gone
 		Unwire: func() error { return set("") },
 	}
+}
+
+// agyOwned says agy, its settings at path, is on magpie: while magpie's
+// record says so, whatever the catalog says of its model now; while the
+// record can't be read, so Disconnect says why it can't take it out rather
+// than finding nothing to; and, when look, while the old wiring is in its
+// settings. A stopped distro's settings aren't looked at: opening them
+// through \\wsl.localhost starts it (#3896).
+func agyOwned(path string, look bool) bool {
+	if st := agyReadState(agyStateKey(path)); !st.Known || st.On() {
+		return true
+	}
+	if !look {
+		return false
+	}
+	_, old := agyOldWiring(path)
+	return old
 }
 
 // agyDistroCheck says what in the distro's function agy no longer matches
