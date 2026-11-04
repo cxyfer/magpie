@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yetone/magpie/internal/edit"
 	"github.com/yetone/magpie/internal/gateway"
 	"github.com/yetone/magpie/internal/provider"
 )
@@ -107,6 +108,12 @@ func TestAgy(t *testing.T) {
 	if err := a.Apply("model", "magpie/deepseek/flash"); err != nil {
 		t.Fatal(err)
 	}
+	// gemini as an older magpie wrote it over the user's: a start puts
+	// theirs back
+	os.WriteFile(path, []byte(strings.Replace(agyRead(t, path), `"vertex"`, `"gemini"`, 1)), 0o644)
+	if err := a.Sync(); err != nil || read()["modelProvider"] != "vertex" {
+		t.Fatalf("after Sync: %v\n%s", err, agyRead(t, path))
+	}
 	// the options: the user's own, then magpie's
 	opts := a.Field("model").Options(a.Values())
 	if len(opts) == 0 || opts[0].Value != "mine" || opts[0].Group != "Antigravity CLI" {
@@ -126,12 +133,28 @@ func TestAgy(t *testing.T) {
 		t.Fatal("launch after reset")
 	}
 
-	// with nothing of the user's, reset leaves nothing of magpie's
+	// with nothing of the user's, reset leaves nothing of magpie's, and a
+	// start takes out the gemini an older magpie wrote where they had none
 	os.WriteFile(path, []byte("{\n  \"trustedWorkspaces\": []\n}\n"), 0o644)
 	a.Apply("model", "magpie/deepseek/pro")
+	edit.SetJSON(path, edit.KV{Path: "modelProvider", Value: "gemini"})
+	if err := a.Sync(); err != nil || read()["modelProvider"] != nil {
+		t.Fatalf("after Sync: %v\n%s", err, agyRead(t, path))
+	}
 	a.Apply("model", "")
 	if got := strings.TrimSpace(agyRead(t, path)); got != "{\n  \"trustedWorkspaces\": []\n}" {
 		t.Fatalf("left behind:\n%s", got)
+	}
+
+	// the user's own gemini stays, on magpie and after
+	os.WriteFile(path, []byte(`{"modelProvider": "gemini"}`), 0o644)
+	a.Apply("model", "magpie/deepseek/pro")
+	if err := a.Sync(); err != nil || read()["modelProvider"] != "gemini" {
+		t.Fatalf("after Sync: %v\n%s", err, agyRead(t, path))
+	}
+	a.Apply("model", "")
+	if read()["modelProvider"] != "gemini" {
+		t.Fatalf("after reset:\n%s", agyRead(t, path))
 	}
 }
 

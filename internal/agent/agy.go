@@ -356,6 +356,15 @@ func agyIn(at place) *Agent {
 			if !on {
 				return nil
 			}
+			// the modelProvider an older magpie wrote goes back to the
+			// user's, none when they had none: agy gets it from --settings
+			if provider() == "gemini" {
+				if was := stashShared()[stashProvider]; was != "gemini" {
+					if err := put("modelProvider", was); err != nil {
+						return err
+					}
+				}
+			}
 			return setModels(true)
 		},
 		Notice: func() string {
