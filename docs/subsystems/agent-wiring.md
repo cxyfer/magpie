@@ -104,7 +104,9 @@ row made while the distro ran asks `distro.live` first. A quit's question (`wire
 it by `Owned` too. agy's `Unwire` is the whole step-out, the model field's
 Default (migration, the provider put back, the record and the shell block
 gone), run before Disconnect's own stash writes, and the fields' loop is
-skipped. If the state record is damaged, Check
+skipped. A stash that can't be read at all leaves Sync doing nothing while
+settings.json has no old wiring, as before agy had a record, and refuses it
+otherwise. If the state record is damaged, Check
 names `agy.state:<absolute settings path>` and tells the user to Pick agy's
 model again to rebuild it.
 

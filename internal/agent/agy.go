@@ -272,6 +272,14 @@ func agyReadState(key string) agyState {
 	return s
 }
 
+// agyStashKnown says magpie's stash can be read as a whole.
+func agyStashKnown() bool {
+	stashMu.Lock()
+	defer stashMu.Unlock()
+	_, err := stashLoadKnown()
+	return err == nil
+}
+
 // agyChange serializes the fresh settings read with every stash mutation.
 // Settings and stash are rolled back together on failure; no snapshot is
 // consumed before restoration succeeds. Catalog work happens before the lock:
@@ -469,6 +477,12 @@ func agyIn(at place) *Agent {
 			return "agy"
 		},
 		Sync: func() error {
+			// a stash that can't be read at all is left to Check: with
+			// nothing of the old magpie's to clean, an agy that may never
+			// have been on magpie isn't refused a sync over it
+			if !agyStashKnown() && !agyOldWiring(path) {
+				return nil
+			}
 			if err := agyChange(id, path, "", "sync"); err != nil {
 				return err
 			}

@@ -355,21 +355,6 @@ func TestAgyMigrateModelPrefixWithoutCustomModels(t *testing.T) {
 	}
 }
 
-func TestAgyOldWiringRecognizesModelPrefix(t *testing.T) {
-	_, _, path, _ := agyTestHome(t)
-	agyWrite(t, path, `{"model":"magpie/deepseek/pro","trustedWorkspaces":["/w"]}`)
-	a, err := Find("agy")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(stashPath(), []byte("{"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if c := a.Check(); !strings.Contains(c, "old magpie's") {
-		t.Fatalf("old model prefix was not reported: %q", c)
-	}
-}
-
 // Check says what keeps agy off magpie: the old wiring left in its
 // settings, modelProvider gemini taking its chats to /v1beta, a model
 // magpie no longer serves, or magpie's own record unreadable. Sync repairs
@@ -433,6 +418,23 @@ func TestAgyCheck(t *testing.T) {
 	}
 	if err := a.Sync(); err == nil {
 		t.Fatal("Sync accepted an unreadable record")
+	}
+	// a stash that can't be read at all: the old wiring is still told,
+	// and refused a sync; with none, a sync leaves both as they are
+	os.WriteFile(stashPath(), []byte("{"), 0o600)
+	agyWrite(t, path, `{"model":"magpie/deepseek/pro","trustedWorkspaces":["/w"]}`)
+	if c := a.Check(); !strings.Contains(c, "old magpie's") {
+		t.Fatalf("old model under an unreadable stash: %q", c)
+	}
+	if err := a.Sync(); err == nil {
+		t.Fatal("Sync said nothing of the old wiring it can't clean over an unreadable stash")
+	}
+	agyWrite(t, path, `{"model":"mine"}`)
+	if err := a.Sync(); err != nil {
+		t.Fatalf("Sync over an unreadable stash: %v", err)
+	}
+	if agyFile(t, path) != `{"model":"mine"}` || agyFile(t, stashPath()) != "{" {
+		t.Fatalf("written over an unreadable stash:\n%s\n%s", agyFile(t, path), agyFile(t, stashPath()))
 	}
 }
 
