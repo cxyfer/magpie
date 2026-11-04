@@ -507,6 +507,76 @@ func TestAgyGatewayRestore(t *testing.T) {
 	}
 }
 
+// An agy whose model magpie no longer serves is still on magpie: magpie's
+// record says so, not the catalog. Disconnect, which a quit's and
+// uninstall's disconnect are, takes it out all the same: the provider
+// magpie took out back, its record and function gone. Old settings on a
+// model gone are cleaned, and leave no record behind.
+func TestAgyDisconnectModelGone(t *testing.T) {
+	gone := func(t *testing.T) {
+		t.Helper()
+		if err := provider.Delete("deepseek"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Run("on the gateway", func(t *testing.T) {
+		home, _, path, mark := agyTestHome(t)
+		mine := "alias ll='ls -l'\n"
+		agyWrite(t, filepath.Join(home, ".bashrc"), mine)
+		agyWrite(t, path, `{"model":"mine","modelProvider":"gemini"}`)
+		a := agy(home)
+		if err := a.Apply("model", "magpie/deepseek/pro"); err != nil {
+			t.Fatal(err)
+		}
+		gone(t)
+		if a.Wired() || !a.Owned() {
+			t.Fatalf("wired %v, owned %v", a.Wired(), a.Owned())
+		}
+		if err := a.Reapply(); err == nil || !strings.Contains(err.Error(), "no longer serves deepseek/pro") {
+			t.Fatalf("Reapply: %v", err)
+		}
+		if err := a.Disconnect(); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := stashShared()[mark]; ok || a.Owned() {
+			t.Fatalf("magpie's record left: %q", stashShared()[mark])
+		}
+		if m, _ := edit.GetJSON(path, "model"); m != "mine" {
+			t.Fatalf("model after Disconnect: %q", m)
+		}
+		if p, _ := edit.GetJSON(path, "modelProvider"); p != "gemini" {
+			t.Fatalf("modelProvider after Disconnect: %q\n%s", p, agyFile(t, path))
+		}
+		if env, m, err := AgyStart(); err != nil || env != nil || m != "" {
+			t.Fatalf("AgyStart after Disconnect: %v %q %v", env, m, err)
+		}
+		if got := agyFile(t, filepath.Join(home, ".bashrc")); got != mine {
+			t.Fatalf(".bashrc after Disconnect:\n%s", got)
+		}
+	})
+	t.Run("old settings", func(t *testing.T) {
+		home, _, path, mark := agyTestHome(t)
+		agyWrite(t, path, `{"model":"magpie/deepseek/pro","modelProvider":"gemini","customModelsConfig":{"customModels":{"magpie/deepseek/pro":{"apiProvider":"API_PROVIDER_GOOGLE_GEMINI","modelName":"deepseek/pro"}}}}`)
+		stash(map[string]string{"agy:" + path + ":model": "mine", "agy:" + path + ":modelProvider": "vertex"})
+		gone(t)
+		a := agy(home)
+		if a.Wired() || !a.Owned() {
+			t.Fatalf("wired %v, owned %v", a.Wired(), a.Owned())
+		}
+		if err := a.Disconnect(); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := stashShared()[mark]; ok || a.Owned() {
+			t.Fatalf("a record was made: %q", stashShared()[mark])
+		}
+		m, _ := edit.GetJSON(path, "model")
+		p, _ := edit.GetJSON(path, "modelProvider")
+		if m != "mine" || p != "vertex" || strings.Contains(agyFile(t, path), "magpie/") {
+			t.Fatalf("settings after Disconnect:\n%s", agyFile(t, path))
+		}
+	})
+}
+
 func TestAgyUnknownStateStopsEdits(t *testing.T) {
 	home, _, path, key := agyTestHome(t)
 	agyWrite(t, path, `{"modelProvider":"gemini"}`)

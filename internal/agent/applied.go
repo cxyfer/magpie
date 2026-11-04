@@ -847,15 +847,23 @@ func (a *Agent) Disconnect() (err error) {
 		}
 		return a.Native.Execute(plan)
 	}
-	if isAgy(a.ID) && a.Path != "" {
-		if a.unreached != nil {
-			return a.unreached
+	// agy is on magpie while magpie's record says so (Owned), its model
+	// in the catalog or not, and its Unwire takes all of it out, its
+	// fields left alone. That runs before the stash writes below, which
+	// would set a stash that doesn't parse aside, agy's record with it.
+	agy := isAgy(a.ID)
+	var before map[string]string
+	if agy {
+		if a.Owned == nil || !a.Owned() {
+			return nil
 		}
-		if err := agyChange(a.ID, a.Path, "", "migrate"); err != nil {
-			return err
+		before = a.Values()
+		if a.Unwire != nil {
+			if err := a.Unwire(); err != nil {
+				return err
+			}
 		}
-	}
-	if !a.Wired() {
+	} else if !a.Wired() {
 		return nil
 	}
 	// the user's say, kept till they connect it again: nothing magpie does
@@ -864,13 +872,18 @@ func (a *Agent) Disconnect() (err error) {
 	stash(map[string]string{a.ID + disconnectedKey: "1"})
 	// the user's own say over a harness Kiro Crew's connect put on
 	kiroCrewUserLeft(a.ID)
-	before, rec := a.Values(), appliedOf(a.ID)
-	if a.Unwire != nil {
-		if err := a.Unwire(); err != nil {
-			return err
+	rec, fields := appliedOf(a.ID), a.Fields
+	if agy {
+		fields = nil // as the user has them: Unwire left them so
+	} else {
+		before = a.Values()
+		if a.Unwire != nil {
+			if err := a.Unwire(); err != nil {
+				return err
+			}
 		}
 	}
-	for _, f := range a.Fields {
+	for _, f := range fields {
 		vals := a.Values()
 		v := vals[f.Key]
 		// set by magpie: as it set it, or its group by the model's name
@@ -900,7 +913,7 @@ func (a *Agent) Disconnect() (err error) {
 		if w := was[f.Key]; w != "" && after[f.Key] == "" && w != magpieID && !magpieValue(a, f, w, was) {
 			// agy's gateway never writes its model; its snapshot restoration
 			// already preserved the user's current value, including absence.
-			if isAgy(a.ID) {
+			if agy {
 				continue
 			}
 			if err := f.Set(w); err != nil {

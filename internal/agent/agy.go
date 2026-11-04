@@ -274,11 +274,9 @@ func agyReadState(key string) agyState {
 
 // agyChange serializes the fresh settings read with every stash mutation.
 // Settings and stash are rolled back together on failure; no snapshot is
-// consumed before restoration succeeds. Catalog work happens before the lock.
+// consumed before restoration succeeds. Catalog work happens before the lock:
+// "set" to "" steps out whatever the catalog says of the model.
 func agyChange(id, path, ref, how string) error {
-	if how == "set" && ref != "" && !isMagpie(ref) {
-		return fmt.Errorf("Antigravity CLI's own models are picked in agy's /model after disconnecting; pick one of magpie's models, or Default to step out")
-	}
 	stashMu.Lock()
 	defer stashMu.Unlock()
 	return edit.Atomically(func() error {
@@ -329,7 +327,7 @@ func agyChange(id, path, ref, how string) error {
 				}
 			}
 			s = agyState{Known: true}
-		case how != "migrate":
+		default:
 			if how == "set" {
 				if !s.On() {
 					s = agyState{Before: map[string]json.RawMessage{}, Known: true}
@@ -440,6 +438,21 @@ func agyIn(at place) *Agent {
 		}
 		return agyLaunchAt(gw(), key(), ref, false)
 	}
+	// set is the model field's Set; "" steps out
+	set := func(v string) error {
+		ref, ours := strings.CutPrefix(v, magpieID+"/")
+		if ref != "" && !isMagpie(ref) {
+			if ours {
+				return fmt.Errorf("magpie no longer serves %s; pick another of its models for Antigravity CLI, or Default to step out", ref)
+			}
+			return fmt.Errorf("Antigravity CLI's own models are picked in agy's /model after disconnecting; pick one of magpie's models, or Default to step out")
+		}
+		if err := agyChange(id, path, ref, "set"); err != nil {
+			return err
+		}
+		shell(agyReadState(stateKey).On())
+		return nil
+	}
 	return &Agent{
 		ID: "agy", Name: "Antigravity CLI", Icon: "antigravity-color", Aliases: []string{"antigravity-cli"}, NoNames: true,
 		Bin: "agy", Dir: dir, Path: path,
@@ -515,14 +528,7 @@ func agyIn(at place) *Agent {
 		Fields: []Field{{
 			Key: "model", Label: "model",
 			Get: get,
-			Set: func(v string) error {
-				ref := strings.TrimPrefix(v, magpieID+"/")
-				if err := agyChange(id, path, ref, "set"); err != nil {
-					return err
-				}
-				shell(agyReadState(stateKey).On())
-				return nil
-			},
+			Set: set,
 			Options: func(map[string]string) []Option {
 				// agy's own models aren't in the gateway's list, and
 				// writing one into its settings is what this route
@@ -531,14 +537,21 @@ func agyIn(at place) *Agent {
 				return withVia(nil, "agy", magpieID+"/")
 			},
 		}},
+		// on magpie while magpie's record says so, whatever the catalog says
+		// of its model now, or while the old wiring is in its settings; and
+		// while the record can't be read, so Disconnect says why it can't
+		// take it out rather than finding nothing to
 		Owned: func() bool {
-			if agyReadState(stateKey).On() {
+			if st := agyReadState(stateKey); !st.Known || st.On() {
 				return true
 			}
 			_, old := agyOldWiring(path)
 			return old
 		},
-		Unwire: func() error { return agyChange(id, path, "", "migrate") },
+		// Disconnect's whole step-out, its fields left alone: the old
+		// wiring cleaned, the modelProvider magpie took out put back,
+		// magpie's record and the function gone
+		Unwire: func() error { return set("") },
 	}
 }
 

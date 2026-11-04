@@ -93,7 +93,15 @@ uses the Enterprise Gateway, so a `gemini` value that appears during a
 connection is treated as an external edit and is restored after disconnect.
 The original `model` is restored during legacy migration; new connections never
 change it. Disconnect forgets the gateway state and drops the shell block; later
-syncs leave the restored provider alone. If the state record is damaged, Check
+syncs leave the restored provider alone. It asks `Owned`, not `Wired`: agy is
+on magpie while the record says so, its model in the catalog or not, while the
+old wiring is in settings.json, and while the record can't be read (Disconnect
+then says why it can't take it out). A quit's question (`wiredAgents` in
+[`quitask.go`](../../internal/gui/quitask.go)) and uninstall (`Connected`) list
+it by `Owned` too. agy's `Unwire` is the whole step-out, the model field's
+Default (migration, the provider put back, the record and the shell block
+gone), run before Disconnect's own stash writes, and the fields' loop is
+skipped. If the state record is damaged, Check
 names `agy.state:<absolute settings path>` and tells the user to Pick agy's
 model again to rebuild it.
 

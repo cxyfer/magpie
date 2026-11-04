@@ -169,8 +169,10 @@ type Agent struct {
 	// kept: the endpoint, provider and model the user had. Disconnect runs
 	// it before the fields' defaults.
 	Unwire func() error
-	// Owned identifies agy's pending legacy cleanup or restoration even when
-	// its own model picker makes Wired false. Nil for other agents.
+	// Owned says magpie has agy on its gateway by magpie's own record,
+	// whatever Wired says: on a model that left the catalog, on the old
+	// wiring, or with a record that can't be read. Disconnect, a quit's
+	// question and uninstall ask it. Nil for other agents.
 	Owned func() bool
 	// Restore, for an agent whose files magpie copied aside before its
 	// first write (beforeMagpie), puts them back as they were where what
