@@ -77,8 +77,9 @@ func TestAgy(t *testing.T) {
 	if err := a.Apply("model", "magpie/deepseek/pro"); err != nil {
 		t.Fatal(err)
 	}
-	if b, _ := os.ReadFile(AgySettingsPath()); string(b) != AgySettings {
-		t.Fatalf("settings file: %q", b)
+	// magpie's file, beside agy's own
+	if b, _ := os.ReadFile(AgySettingsPath()); string(b) != AgySettings || AgySettingsPath() != filepath.Join(filepath.Dir(path), "magpie-settings.json") {
+		t.Fatalf("settings file %s: %q", AgySettingsPath(), b)
 	}
 	// modelProvider stays the user's: agy started on magpie is given
 	// gemini by --settings (#2924)
@@ -154,6 +155,10 @@ func TestAgy(t *testing.T) {
 	a.Apply("model", "")
 	if got := strings.TrimSpace(agyRead(t, path)); got != "{\n  \"trustedWorkspaces\": []\n}" {
 		t.Fatalf("left behind:\n%s", got)
+	}
+	// nor its --settings file beside it
+	if es, _ := os.ReadDir(filepath.Dir(path)); len(es) != 1 {
+		t.Fatalf("agy's folder: %v", es)
 	}
 }
 

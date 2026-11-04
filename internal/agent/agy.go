@@ -84,10 +84,15 @@ var agyOS = runtime.GOOS
 // isn't known is started with it all the same.
 func agyTooOld(v string) bool { return v != "" && Newer(agySettingsSince, v) }
 
-// AgySettingsPath is AgySettings as a file, beside magpie's stash, for
-// PowerShell: Windows PowerShell 5.1 hands a native program JSON with its
-// quotes taken out, a path as it is.
-func AgySettingsPath() string { return filepath.Join(filepath.Dir(stashPath()), "agy-settings.json") }
+// AgySettingsPath is AgySettings as a file, for PowerShell: Windows
+// PowerShell 5.1 hands a native program JSON with its quotes taken out, a
+// path as it is. It is beside agy's settings.json, named as the files
+// magpie hands an agent are (Air's magpie-opencode.json, Codex's
+// magpie-models.json); agy reads it only when given it.
+func AgySettingsPath() string {
+	home, _ := homes()
+	return filepath.Join(home, ".gemini", "antigravity-cli", "magpie-settings.json")
+}
 
 // AgySettingsFile writes AgySettingsPath when it doesn't hold AgySettings:
 // agy started with a path that isn't there exits at once.
@@ -134,8 +139,9 @@ func AgyStart() (env []string, model string) {
 }
 
 // agyShell gives the user's shells the function agy, or takes it out of
-// them; only for agy on this machine. What fails leaves the setting as it
-// is: the row's command still starts it.
+// them with the --settings file it names; only for agy on this machine.
+// What fails leaves the setting as it is: the row's command still starts
+// it, and a file left behind is read by nothing.
 func agyShell(home string, on bool) {
 	if here, _ := homes(); here != home {
 		return
@@ -144,6 +150,7 @@ func agyShell(home string, on bool) {
 		update.ShellFunction("agy", agyFunction)
 	} else {
 		update.DropShellFunction("agy")
+		os.Remove(AgySettingsPath())
 	}
 }
 
