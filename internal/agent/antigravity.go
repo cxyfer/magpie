@@ -20,9 +20,9 @@ package agent
 // sign-in and uses none: Google's docs say the two can't be used at once.
 //
 // The same file is read by agy (Antigravity's CLI) too, below its own
-// ~/.gemini/antigravity-cli/settings.json: an agy connected on its own row
-// (modelProvider gemini) keeps that route, one that isn't follows the app's
-// gateway. admin_settings.json, which an organisation installs, and the
+// ~/.gemini/antigravity-cli/settings.json: an agy magpie starts on its own
+// row (--settings giving it modelProvider gemini) keeps that route, any
+// other follows the app's gateway. admin_settings.json, which an organisation installs, and the
 // AGY_LLM_GATEWAY_* variables win over this file, field by field.
 
 import (

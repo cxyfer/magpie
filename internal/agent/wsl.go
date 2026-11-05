@@ -725,8 +725,9 @@ var wslKinds = []wslKind{
 	// Antigravity CLI, by its own folder under ~/.gemini or its command
 	// (mimi001234 on Discord: magpie didn't find agy in WSL); it takes the
 	// gateway only from how it is started, so the distro's shells get the
-	// function agy (agyDistroFunction)
-	{id: "agy", name: "Antigravity CLI", dir: ".gemini/antigravity-cli", bin: "agy", in: agyIn,
+	// function agy (agyDistroFunction); its version says whether it takes
+	// the --settings that function gives it (agySettingsSince)
+	{id: "agy", name: "Antigravity CLI", dir: ".gemini/antigravity-cli", bin: "agy", in: agyIn, version: true,
 		restart: newNotice("{agent} in WSL {distro} takes magpie's gateway and model only from how it is started — type agy in a new terminal there: magpie put it in the shell's profile."),
 		asleep: func(key string) func(map[string]string) []Option {
 			if key != "model" {

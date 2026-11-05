@@ -6,8 +6,11 @@ package agent
 // models of customModelsConfig.customModels, each {apiProvider, modelName},
 // the one picked being "model". magpie's gateway speaks the Gemini API, so
 // magpie adds one custom model per catalog model, keyed
-// "magpie/<provider>/<model>", and sets modelProvider and model; the user's
-// own are stashed and put back when magpie steps out. The endpoint and key
+// "magpie/<provider>/<model>", and sets model; the user's own is stashed
+// and put back when magpie steps out. modelProvider magpie gives only the
+// agy it starts, as --settings (AgySettings, agy 1.4.10 or later), and
+// leaves settings.json's as the user has it: one there makes every agy
+// started without GEMINI_API_KEY exit at once (#2924). The endpoint and key
 // agy takes only from its environment (GOOGLE_GEMINI_BASE_URL and
 // GEMINI_API_KEY; no .env file), so magpie can't set them: the agent's row
 // gives the command that starts agy with them (see Agent.Launch). That
@@ -20,14 +23,18 @@ package agent
 // of each shell the user has, between "# >>> magpie agy >>>" and
 // "# <<< magpie agy <<<" (update.ShellFunction), while agy is on one of
 // magpie's models. It runs `magpie agy run`, which starts the real agy
-// with the two variables and --model when settings.json's model is still
-// magpie's and as it is otherwise (cli/agy_cli.go); PowerShell's asks
-// `magpie agy env` for them, since the app it would run is a GUI program
-// PowerShell doesn't wait for. A terminal open before takes the command
-// from the row.
+// with the two variables, --settings and --model when settings.json's
+// model is still magpie's and as it is otherwise (cli/agy_cli.go);
+// PowerShell's asks `magpie agy env` for them, since the app it would run
+// is a GUI program PowerShell doesn't wait for. A terminal open before
+// takes the command from the row. PowerShell's function and a distro's
+// start agy themselves, so one in a terminal opened before magpie gave
+// --settings, like a command copied then, starts agy off magpie until the
+// terminal is opened again.
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
@@ -45,6 +52,61 @@ import (
 
 const agyModels = "customModelsConfig.customModels"
 
+// AgySettings is what magpie starts agy with on one of its models, as
+// --settings: settings.json's keys for that session alone, which agy never
+// writes to the file. modelProvider gemini sends that agy to the Gemini API
+// endpoint its variables name; one started any other way asks as the
+// user's settings.json says.
+const AgySettings = `{"modelProvider":"gemini"}`
+
+// agySettingsSince is the oldest agy that takes --settings: 1.4.9 exits
+// with "flags provided but not defined: -settings".
+const agySettingsSince = "1.4.10"
+
+// agyVersion is the version of the agy on PATH, "" when there is none or
+// it didn't say; asked again only once the binary changes
+// (installedVersion). A var so tests can fake it.
+var agyVersion = func() string {
+	bin := (&Agent{ID: "agy", Bin: "agy"}).BinPath()
+	if bin == "" {
+		return ""
+	}
+	real, _ := throughShim(bin)
+	return installedVersion(real)
+}
+
+// agyOS is the system magpie runs on, which says whether agy is given
+// AgySettings by its file (Windows' PowerShell); a var so a test on
+// another system can take that way.
+var agyOS = runtime.GOOS
+
+// agyTooOld says agy at version v takes no --settings. One whose version
+// isn't known is started with it all the same.
+func agyTooOld(v string) bool { return v != "" && Newer(agySettingsSince, v) }
+
+// AgySettingsPath is AgySettings as a file, for PowerShell: Windows
+// PowerShell 5.1 hands a native program JSON with its quotes taken out, a
+// path as it is. It is beside agy's settings.json, named as the files
+// magpie hands an agent are (Air's magpie-opencode.json, Codex's
+// magpie-models.json); agy reads it only when given it.
+func AgySettingsPath() string {
+	home, _ := homes()
+	return filepath.Join(home, ".gemini", "antigravity-cli", "magpie-settings.json")
+}
+
+// AgySettingsFile writes AgySettingsPath when it doesn't hold AgySettings:
+// agy started with a path that isn't there exits at once.
+func AgySettingsFile() error {
+	p := AgySettingsPath()
+	if b, err := os.ReadFile(p); err == nil && string(b) == AgySettings {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return err
+	}
+	return edit.WriteAtomic(p, []byte(AgySettings))
+}
+
 // AgyLaunch is the command that starts agy on magpie's gateway and one of
 // its custom models, in the shell of this system. Its key names agy: its
 // requests go out as Google's Gemini SDK's (User-Agent google-genai-sdk/…),
@@ -56,12 +118,12 @@ func AgyLaunch(model string) string {
 }
 
 // agyLaunchAt is AgyLaunch for agy reaching the gateway at gw with key, in
-// PowerShell or a POSIX shell.
+// PowerShell, which gives AgySettings by its file, or a POSIX shell.
 func agyLaunchAt(gw, key, model string, powershell bool) string {
 	if powershell {
-		return `$env:GEMINI_API_KEY="` + key + `"; $env:GOOGLE_GEMINI_BASE_URL="` + gw + `"; agy --model '` + strings.ReplaceAll(model, "'", "''") + `'`
+		return `$env:GEMINI_API_KEY="` + key + `"; $env:GOOGLE_GEMINI_BASE_URL="` + gw + `"; agy --settings '` + strings.ReplaceAll(AgySettingsPath(), "'", "''") + `' --model '` + strings.ReplaceAll(model, "'", "''") + `'`
 	}
-	return "GEMINI_API_KEY=" + key + " GOOGLE_GEMINI_BASE_URL=" + gw + " agy --model '" + strings.ReplaceAll(model, "'", `'\''`) + "'"
+	return "GEMINI_API_KEY=" + key + " GOOGLE_GEMINI_BASE_URL=" + gw + " agy --settings '" + AgySettings + "' --model '" + strings.ReplaceAll(model, "'", `'\''`) + "'"
 }
 
 // AgyStart is what starts agy on magpie, the variables and the model,
@@ -77,8 +139,9 @@ func AgyStart() (env []string, model string) {
 }
 
 // agyShell gives the user's shells the function agy, or takes it out of
-// them; only for agy on this machine. What fails leaves the setting as it
-// is: the row's command still starts it.
+// them with the --settings file it names; only for agy on this machine.
+// What fails leaves the setting as it is: the row's command still starts
+// it, and a file left behind is read by nothing.
 func agyShell(home string, on bool) {
 	if here, _ := homes(); here != home {
 		return
@@ -87,6 +150,7 @@ func agyShell(home string, on bool) {
 		update.ShellFunction("agy", agyFunction)
 	} else {
 		update.DropShellFunction("agy")
+		os.Remove(AgySettingsPath())
 	}
 }
 
@@ -99,6 +163,9 @@ func agyFunction(kind, prog string) string {
 		return "function agy\n    if test -x " + q + "\n        " + q + " agy run $argv\n    else\n        command agy $argv\n    end\nend"
 	case "powershell":
 		q := "'" + strings.ReplaceAll(prog, "'", "''") + "'"
+		// the file's path is written out here: one `agy env` printed would
+		// come back in the console's code page
+		s := "'" + strings.ReplaceAll(AgySettingsPath(), "'", "''") + "'"
 		return `function agy {
     $real = Get-Command agy -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $real) { Write-Error 'agy is not installed'; return }
@@ -110,7 +177,7 @@ func agyFunction(kind, prog string) string {
     $was = $env:GEMINI_API_KEY, $env:GOOGLE_GEMINI_BASE_URL
     $env:GEMINI_API_KEY = $start.GEMINI_API_KEY; $env:GOOGLE_GEMINI_BASE_URL = $start.GOOGLE_GEMINI_BASE_URL
     try {
-        if (@($args | Where-Object { "$_" -match '^--?model(=|$)' }).Count) { & $real @args } else { & $real --model $start.model @args }
+        if (@($args | Where-Object { "$_" -match '^--?model(=|$)' }).Count) { & $real --settings ` + s + ` @args } else { & $real --settings ` + s + ` --model $start.model @args }
     } finally { $env:GEMINI_API_KEY = $was[0]; $env:GOOGLE_GEMINI_BASE_URL = $was[1] }
 }`
 	}
@@ -165,8 +232,8 @@ const agyDistroModel = `s|^.*"model"[[:space:]]*:[[:space:]]*"\(` + magpieID + `
 
 // agyDistroFunction is the function agy in a distro's shell of kind:
 // while settings.json's model is magpie's, the agy on PATH started with
-// the gateway at gw, its key and --model (none when one is given), as
-// `magpie agy run` does on this machine; as it is otherwise.
+// the gateway at gw, its key, AgySettings and --model (none when one is
+// given), as `magpie agy run` does on this machine; as it is otherwise.
 func agyDistroFunction(kind, key, gw string) string {
 	q := func(v string) string { return "'" + strings.ReplaceAll(v, "'", `'\''`) + "'" }
 	settings := `"$HOME/.gemini/antigravity-cli/settings.json"`
@@ -177,6 +244,7 @@ func agyDistroFunction(kind, key, gw string) string {
 			"    if test -z \"$m\"\n        command agy $argv\n        return\n    end\n" +
 			"    for a in $argv\n        switch $a\n            case '--model' '--model=*' '-model' '-model=*'\n                set m ''\n        end\n    end\n" +
 			"    if test -n \"$m\"\n        set argv --model $m $argv\n    end\n" +
+			"    set argv --settings " + fq(AgySettings) + " $argv\n" +
 			"    env GEMINI_API_KEY=" + fq(key) + " GOOGLE_GEMINI_BASE_URL=" + fq(gw) + " agy $argv\nend"
 	}
 	return "function agy {\n" +
@@ -185,6 +253,7 @@ func agyDistroFunction(kind, key, gw string) string {
 		`  if [ -z "$m" ]; then command agy "$@"; return; fi` + "\n" +
 		`  for a in "$@"; do case "$a" in --model|--model=*|-model|-model=*) m=;; esac; done` + "\n" +
 		`  if [ -n "$m" ]; then set -- --model "$m" "$@"; fi` + "\n" +
+		"  set -- --settings " + q(AgySettings) + ` "$@"` + "\n" +
 		"  GEMINI_API_KEY=" + q(key) + " GOOGLE_GEMINI_BASE_URL=" + q(gw) + ` command agy "$@"` + "\n}"
 }
 
@@ -247,6 +316,25 @@ func agyIn(at place) *Agent {
 	}
 	// the function agy, in this machine's shells or the distro's
 	distro := at.sys != nil
+	// ver is the version of the agy there, which agySettingsSince holds it
+	// to: this machine's asked of its binary, a distro's as its probe found
+	// it (wslKind.version); "" when not known
+	ver := func() string {
+		if distro {
+			return at.version
+		}
+		return agyVersion()
+	}
+	// settingsFile writes AgySettingsFile for agy on this machine where
+	// PowerShell's function and the row's command name it (agyOS): one it
+	// can't write is the pick's error and Sync's, as agy started with a
+	// path that isn't there exits at once
+	settingsFile := func() error {
+		if distro || agyOS != "windows" {
+			return nil
+		}
+		return AgySettingsFile()
+	}
 	gw, key := at.gw, func() string { return agentKeyAt("agy", at.gw()) }
 	shell := func(on bool) {
 		if !distro {
@@ -293,6 +381,9 @@ func agyIn(at place) *Agent {
 			if !on {
 				return nil
 			}
+			if err := settingsFile(); err != nil {
+				return err
+			}
 			return setModels(true)
 		},
 		Notice: func() string {
@@ -320,8 +411,8 @@ func agyIn(at place) *Agent {
 			if _, ok := agyCustom(path)[v]; !ok {
 				return "Antigravity CLI's custom model " + v + " (settings.json) is gone, so it no longer reaches magpie"
 			}
-			if p := provider(); p != "gemini" {
-				return "Antigravity CLI's modelProvider (settings.json) is " + orDefault(p) + ", not gemini, so it asks Google directly"
+			if n := ver(); agyTooOld(n) {
+				return "Antigravity CLI " + n + " takes no --settings, which magpie starts it with (agy " + agySettingsSince + " or later), so it doesn't start on magpie"
 			}
 			// a distro's function names the gateway's address: one WSL
 			// changed on a restart (NAT) no longer reaches it
@@ -340,13 +431,19 @@ func agyIn(at place) *Agent {
 			Set: func(v string) error {
 				cur := get()
 				if ref, ok := strings.CutPrefix(v, magpieID+"/"); ok && isMagpie(ref) {
+					if n := ver(); agyTooOld(n) {
+						return fmt.Errorf("agy %s takes no --settings, which magpie starts it with: update agy to %s or later, then pick the model again", n, agySettingsSince)
+					}
+					if err := settingsFile(); err != nil {
+						return err
+					}
 					if !usesMagpie(cur) {
 						stash(map[string]string{stashModel: cur, stashProvider: provider()})
 					}
 					if err := setModels(true); err != nil {
 						return err
 					}
-					if err := edit.SetJSON(path, edit.KV{Path: "modelProvider", Value: "gemini"}, edit.KV{Path: "model", Value: v}); err != nil {
+					if err := edit.SetJSON(path, edit.KV{Path: "model", Value: v}); err != nil {
 						return err
 					}
 					shell(true)
@@ -359,6 +456,9 @@ func agyIn(at place) *Agent {
 					} else {
 						forget(stashModel)
 					}
+					// modelProvider back as stashed when agy was put on
+					// magpie: the user's, or, where an older magpie put it
+					// on, the one that magpie's gemini went over
 					if err := put("modelProvider", unstash(stashProvider)); err != nil {
 						return err
 					}

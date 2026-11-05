@@ -19,8 +19,8 @@ import (
 func TestWSLAgyFound(t *testing.T) {
 	k := wslKindOf("agy")
 	if !strings.Contains(wslProbeScript, `[ -d "$HOME/.gemini/antigravity-cli" ] && echo dir:.gemini/antigravity-cli; `) ||
-		!strings.Contains(wslProbeScript, `command -v agy `) {
-		t.Fatal("the probe doesn't ask after agy")
+		!strings.Contains(wslProbeScript, `command -v agy `) || !strings.Contains(wslProbeScript, `echo "ver:agy `) {
+		t.Fatal("the probe doesn't ask after agy and its version")
 	}
 	for _, p := range []string{"dir:.gemini/antigravity-cli\n", "bin:agy /home/me/.local/bin/agy\n"} {
 		if d := parseProbe("U", "home:/home/me\n"+p); d == nil || !k.found(*d) {
@@ -81,8 +81,18 @@ func TestWSLAgyPick(t *testing.T) {
 	if a.Typed() != "" || a.Launch() != "" {
 		t.Fatalf("before: %q %q", a.Typed(), a.Launch())
 	}
+	// an agy there without --settings, as the probe found it, isn't put on
+	// magpie, and Check says so of one connected before
+	old := d
+	old.Versions = map[string]string{"agy": "1.4.9"}
+	if err := wslAgent(wslKindOf("agy"), old).Field("model").Set("magpie/relay/glm-4.6"); err == nil || readFile(bashrc) != mine {
+		t.Fatalf("1.4.9 put on magpie: %v\n%s", err, readFile(bashrc))
+	}
 	if err := a.Field("model").Set("magpie/relay/glm-4.6"); err != nil {
 		t.Fatal(err)
+	}
+	if msg := wslAgent(wslKindOf("agy"), old).Check(); !strings.Contains(msg, "1.4.9") {
+		t.Fatalf("Check on 1.4.9: %q", msg)
 	}
 	gw := "http://172.20.0.1:" + gateway.Port()
 	key := agentKeyAt("agy", gw)
@@ -188,10 +198,10 @@ func TestWSLAgyFunctionRuns(t *testing.T) {
 			}
 			return strings.TrimSpace(string(out))
 		}
-		if got := run("-p 'hi there'"); got != on+" args=--model magpie/relay/glm-4.6 -p hi there" {
+		if got := run("-p 'hi there'"); got != on+` args=--settings {"modelProvider":"gemini"} --model magpie/relay/glm-4.6 -p hi there` {
 			t.Errorf("%s: %s", c.sh, got)
 		}
-		if got := run("--model=own -p hi"); got != on+" args=--model=own -p hi" {
+		if got := run("--model=own -p hi"); got != on+` args=--settings {"modelProvider":"gemini"} --model=own -p hi` {
 			t.Errorf("%s, a model given: %s", c.sh, got)
 		}
 	}
